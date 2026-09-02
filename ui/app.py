@@ -42,6 +42,7 @@ class App(QObject):
         self._probing = False
         self._visible = True
         self._anim_busy = False
+        self._pending_toggle = None     # 动画期间再次切换的补切目标(None=无)
         self._quitting = False
         self._dlg = None
         self._dlg_edit_pid = None
@@ -97,15 +98,16 @@ class App(QObject):
         if QSystemTrayIcon.isSystemTrayAvailable():
             self.tray.show()
 
-        # ---- 全局热键 Ctrl+Alt+M ----
+        # ---- 全局热键 Ctrl+Alt+M(独立线程消息循环, 见 ui/hotkey.py) ----
         self._hotkey = GlobalHotkey(self)
         if self._hotkey.registered():
-            QApplication.instance().installNativeEventFilter(self._hotkey)
             self._hotkey.toggled.connect(self._toggle_visible)
             self.tray.showMessage("ModelView", "Ctrl+Alt+M 可随时显示/隐藏面板",
                                   QSystemTrayIcon.MessageIcon.Information, 2500)
         else:
-            self._nlog("全局热键注册失败(Ctrl+Alt+M 可能被占用), 仅托盘可唤回", "warn")
+            code = self._hotkey.error_code
+            self._nlog(f"全局热键注册失败(错误码 {code}, Ctrl+Alt+M 可能被占用), "
+                       f"仅托盘可唤回", "warn")
 
         # ---- 启动 ----
         self._refresh_providers()
@@ -143,6 +145,13 @@ class App(QObject):
 
         def _finish():
             self._anim_busy = False
+            if self._pending_toggle:
+                # 动画期间按过热键/点过托盘: 收尾后按目标态补切一次(合并连续请求)
+                self._pending_toggle = False
+                self._set_visible(not self._visible)
+                return
+            if not show:
+                self._hide_all_now()
             if done is not None:
                 done()
 
@@ -173,8 +182,6 @@ class App(QObject):
                 anim.setStartValue(wid.pos())
                 anim.setEndValue(self._start_pos(wid))
             group.addAnimation(anim)
-        if not show:
-            group.finished.connect(self._hide_all_now)
         group.start(QPropertyAnimation.DeletionPolicy.DeleteWhenStopped)
         self._anim_group = group
 
@@ -183,14 +190,16 @@ class App(QObject):
             wid.hide()
 
     def _toggle_visible(self):
-        if self._visible:
-            self._anim_to_targets(show=False)
-            self._visible = False
-            self._act_show.setText("显示面板")
-        else:
-            self._anim_to_targets(show=True)
-            self._visible = True
-            self._act_show.setText("隐藏面板")
+        if self._anim_busy:
+            # 动画还没走完又触发切换(热键连按/托盘连点): 记下补切, 防吞事件
+            self._pending_toggle = not self._visible
+            return
+        self._set_visible(not self._visible)
+
+    def _set_visible(self, show):
+        self._visible = show
+        self._act_show.setText("隐藏面板" if show else "显示面板")
+        self._anim_to_targets(show=show)
 
     def _on_tray_activated(self, reason):
         if reason == QSystemTrayIcon.ActivationReason.DoubleClick:
@@ -202,8 +211,7 @@ class App(QObject):
         self._sync_top()
 
     def _sync_top(self):
-        self.top.set_state(self._proxy.running, self.cfg.get_port(),
-                           len(self.cfg.get_providers()))
+        self.top.set_state(self._proxy.running, self.cfg.get_port())
 
     def _dialog(self):
         if self._dlg is None:
@@ -370,9 +378,7 @@ class App(QObject):
             return
         self._quitting = True
         try:
-            if self._hotkey.registered():
-                QApplication.instance().removeNativeEventFilter(self._hotkey)
-                self._hotkey.release()
+            self._hotkey.release()
             self.tray.hide()
             self._proxy.stop()
         finally:

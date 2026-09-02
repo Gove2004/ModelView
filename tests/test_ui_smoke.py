@@ -42,6 +42,8 @@ def main():
     check("左翼位于屏幕左缘 x=0", a.left.pos().x() == 0)
     check("右翼贴右缘", a.right.pos().x() + a.right.width() == a._geo.width())
     check("日志条贴底部", a.logdock.pos().y() + a.logdock.height() >= a._geo.height() - 14)
+    check("顶开关不显示提供商计数", not hasattr(a.top, "_sub")
+          and "家" not in a.top._label.text())
 
     # 日志分级渲染
     for lvl in ("ok", "err", "warn", "req", "info"):
@@ -65,6 +67,19 @@ def main():
     check("左翼显示卡片", len(a.left._cards) == 1)
     card = list(a.left._cards.values())[0]
     check("卡片直显 3 个操作按钮", len(card.findChildren(QPushButton)) == 3)
+
+    # 卡片操作按钮点击链路(clicked 携带 checked 参数, 不得顶替 pid)
+    btns = {b.text(): b for b in card.findChildren(QPushButton)}
+    btns["编辑"].click()
+    app.processEvents()
+    check("点[编辑]打开弹层且预填", a._dlg is not None
+          and a._dlg._name.text() == "ds" and not a._dlg.isHidden())
+    a._dlg.hide()
+    QApplication.clipboard().setText("")
+    btns["复制 URL"].click()
+    app.processEvents()
+    check("点[复制URL]写入剪贴板",
+          QApplication.clipboard().text() == "https://api.deepseek.com/v1")
 
     # 左翼搜索筛选
     a.left._search.setText("ds")
@@ -94,6 +109,17 @@ def main():
     app.processEvents()
     check("右翼树 2 根节点", a.right._tree.topLevelItemCount() == 2)
 
+    # 右栏: 单击模型行即复制 / 单击根节点切换展开
+    root0 = a.right._tree.topLevelItem(0)
+    child0 = root0.child(0)
+    QApplication.clipboard().setText("")
+    a.right._on_item_clicked(child0, 0)
+    check("单击模型行复制进剪贴板",
+          QApplication.clipboard().text() == "ds:deepseek-v4-flash")
+    init_exp = root0.isExpanded()
+    a.right._on_item_clicked(root0, 0)
+    check("单击根节点切换展开态", root0.isExpanded() != init_exp)
+
     # 右翼搜索筛选
     a.right._search.setText("ds:")
     app.processEvents()
@@ -118,9 +144,14 @@ def main():
     # 托盘在 offscreen 下不可用但不崩溃
     check("托盘对象存在", a.tray is not None)
 
-    # 删除流程
-    a._delete_provider(pid)
-    check("删除提供商后 0 家", len(cfg.get_providers()) == 0)
+    # 删除流程(走卡片[删除]按钮, 覆盖整条信号链)
+    card = list(a.left._cards.values())[0]
+    for b in card.findChildren(QPushButton):
+        if b.text() == "删除":
+            b.click()
+            break
+    app.processEvents()
+    check("点[删除]后 0 家", len(cfg.get_providers()) == 0)
     app.processEvents()
 
     # 清理

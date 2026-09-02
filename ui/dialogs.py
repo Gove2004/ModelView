@@ -37,7 +37,8 @@ class ProviderDialog(QDialog):
 
         self._title = QLabel("新增提供商")
         self._title.setStyleSheet(
-            f"color: {theme.TEXT}; font-size: 14px; background: transparent; border: none;")
+            f"color: {theme.TEXT}; font-size: {theme.FS_DIALOG_TITLE}px; font-weight: 600;"
+            f"background: transparent; border: none;")
         lay.addWidget(self._title)
 
         self._name = self._field(lay, "name")
@@ -55,7 +56,8 @@ class ProviderDialog(QDialog):
         self._error = QLabel("")
         self._error.setWordWrap(True)
         self._error.setStyleSheet(
-            f"color: {theme.RED}; font-size: 12px; background: transparent; border: none;")
+            f"color: {theme.RED}; font-size: {theme.FS_ERROR}px;"
+            f"background: transparent; border: none;")
         self._error.hide()
         lay.addWidget(self._error)
 

@@ -3,11 +3,15 @@
 
 四个贴边悬浮块, 全部是「透明无边框顶层窗 + 实心圆角面板」:
   - LeftPanel   左翼: 模型提供商列表(卡片直显操作钮 + 搜索筛选)
-  - RightPanel  右翼: 模型探测列表(树状折叠 + 搜索筛选)
-  - TopSwitch   顶部中央: 代理开关胶囊
+  - RightPanel  右翼: 模型探测列表(树状折叠, 单击模型行即复制, 支持筛选)
+  - TopSwitch   顶部中央: 代理开关胶囊(不带提供商计数)
   - LogDock     底部中央: toast 风格日志(可上下滚动, 新条渐显)
 
 面板本身只发信号 + 收简单回调, 业务装配由 ui.app.App 负责。
+
+交互约定:
+  - 卡片操作钮 / ghost 按钮点击均可能携带 clicked 的 checked 参数,
+    connect 到 lambda 时必须显式吞掉该参数, 否则形参被顶替(见 ProviderCard)。
 """
 import time
 from PySide6.QtCore import Qt, Signal, QSize, QPropertyAnimation, QRectF, QPoint
@@ -15,7 +19,7 @@ from PySide6.QtGui import (QFontMetrics, QColor, QPainterPath, QRegion, QIcon,
                            QPixmap, QPainter, QFont, QPolygon)
 from PySide6.QtWidgets import (
     QWidget, QFrame, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
-    QScrollArea, QMenu, QTreeWidget, QTreeWidgetItem, QListWidget,
+    QScrollArea, QTreeWidget, QTreeWidgetItem, QListWidget,
     QListWidgetItem, QGraphicsOpacityEffect, QLineEdit,
 )
 
@@ -63,22 +67,20 @@ def search_box(placeholder):
     ed.setObjectName("search")
     ed.setPlaceholderText(placeholder)
     ed.setClearButtonEnabled(True)
-    ed.setFixedHeight(28)
+    ed.setFixedHeight(30)
     return ed
 
 
-class PanelTitle(QLabel):
-    def __init__(self, text):
-        super().__init__(text)
-        self.setObjectName("panelTitle")
+def PanelTitle(text):
+    lab = QLabel(text)
+    lab.setObjectName("panelTitle")
+    return lab
 
 
-class Pill(QLabel):
-    """小胶囊计数/状态标签。"""
-
-    def __init__(self, text=""):
-        super().__init__(text)
-        self.setObjectName("pill")
+def Pill(text=""):
+    lab = QLabel(text)
+    lab.setObjectName("pill")
+    return lab
 
 
 class ClickableFrame(QFrame):
@@ -135,43 +137,44 @@ class FloatingWindow(QWidget):
 class ProviderCard(QFrame):
     """提供商卡片: name/url + 底部直显 编辑/复制URL/删除 操作条。
 
-    不再依赖右键菜单, 双击卡片仍可快捷编辑。
+    注意: QPushButton.clicked 自带一个 checked 参数, connect 到带形参的
+    lambda 时会被顶替 —— 这里统一在 _act_btn 内部用外层 lambda 吞掉它。
     """
 
     def __init__(self, provider, width, on_edit, on_copy_url, on_delete):
         super().__init__()
         self._p = provider
         self._on_edit = on_edit
-        self.setFixedHeight(64)
+        self.setFixedHeight(72)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         self.setStyleSheet(
             f"ProviderCard {{ background: {theme.BG_CARD}; border-radius: 8px; border: 1px solid transparent; }}"
             f"ProviderCard:hover {{ background: {theme.BG_CARD_HOVER}; border: 1px solid {theme.BORDER}; }}")
 
-        lay = _vbox((12, 7, 12, 6), spacing=1, parent=self)
+        lay = _vbox((12, 8, 12, 7), spacing=2, parent=self)
         name = QLabel(provider.get("name") or "?")
         name.setStyleSheet(
-            f"color: {theme.TEXT}; font-size: 13px; background: transparent; border: none;")
+            f"color: {theme.TEXT}; font-size: {theme.FS_CARD_NAME}px; font-weight: 600;"
+            f"background: transparent; border: none;")
         lay.addWidget(name)
 
         url = QLabel()
         fm = QFontMetrics(url.font())
         full = provider.get("url") or ""
-        url.setText(fm.elidedText(full or "(无 url)", Qt.TextElideMode.ElideMiddle, max(40, width - 60)))
+        url.setText(fm.elidedText(full or "(无 url)", Qt.TextElideMode.ElideMiddle,
+                                  max(40, width - 66)))
         if full:
             url.setToolTip(full)
         url.setStyleSheet(
-            f"color: {theme.TEXT_FAINT}; font-size: 11px; background: transparent; border: none;")
+            f"color: {theme.TEXT_FAINT}; font-size: {theme.FS_META}px;"
+            f"background: transparent; border: none;")
         lay.addWidget(url)
 
-        row = _hbox((0, 0, 0, 0), spacing=2)
+        row = _hbox((0, 0, 0, 0), spacing=4)
         row.addStretch(1)
-        btn_edit = self._act_btn("编辑", on_edit, "cardAct", "编辑提供商")
-        btn_copy = self._act_btn("复制 URL", on_copy_url, "cardAct", "复制提供商 URL")
-        btn_del = self._act_btn("删除", on_delete, "cardDanger", "删除提供商")
-        row.addWidget(btn_edit)
-        row.addWidget(btn_copy)
-        row.addWidget(btn_del)
+        row.addWidget(self._act_btn("编辑", on_edit, "cardAct", "编辑提供商"))
+        row.addWidget(self._act_btn("复制 URL", on_copy_url, "cardAct", "复制提供商 URL"))
+        row.addWidget(self._act_btn("删除", on_delete, "cardDanger", "删除提供商"))
         lay.addLayout(row)
 
     @staticmethod
@@ -180,7 +183,8 @@ class ProviderCard(QFrame):
         b.setObjectName(obj_name)
         b.setCursor(Qt.CursorShape.PointingHandCursor)
         b.setToolTip(tip)
-        b.clicked.connect(slot)
+        # clicked(bool) → 外层 lambda 吞掉 checked, 再以无参方式调 slot
+        b.clicked.connect(lambda _checked=False, s=slot: s())
         return b
 
     def provider(self):
@@ -213,7 +217,7 @@ class LeftPanel(FloatingWindow):
 
         holder = QWidget()
         holder.setStyleSheet("background: transparent;")
-        self._card_col = _vbox((0, 0, 0, 0), spacing=4, parent=holder)
+        self._card_col = _vbox((0, 0, 0, 0), spacing=6, parent=holder)
         self._card_col.addStretch(1)
         scroll = QScrollArea(self.panel)
         scroll.setWidgetResizable(True)
@@ -231,7 +235,8 @@ class LeftPanel(FloatingWindow):
         if self._empty is None:
             self._empty = QLabel()
             self._empty.setStyleSheet(
-                f"color: {theme.TEXT_FAINT}; font-size: 12px; background: transparent; border: none;")
+                f"color: {theme.TEXT_FAINT}; font-size: {theme.FS_BASE}px;"
+                f"background: transparent; border: none;")
             self._empty.setWordWrap(True)
             self._card_col.insertWidget(self._card_col.count() - 1, self._empty)
         self._empty.setText(text)
@@ -298,7 +303,11 @@ def _arrow_icon(open_state, color=theme.TEXT_DIM):
 
 
 class RightPanel(FloatingWindow):
-    """右翼: 全部提供商的模型树(树状折叠, 双击复制 name:model, 支持筛选)。"""
+    """右翼: 全部提供商的模型树。
+
+    - 根节点(提供商): 单击展开 / 收起
+    - 模型子行: 单击即复制 name:model(不必右键), 复制后走 copy_requested
+    """
 
     refresh_requested = Signal()
     copy_requested = Signal(str)
@@ -318,9 +327,8 @@ class RightPanel(FloatingWindow):
         self._tree.setHeaderHidden(True)
         self._tree.setIndentation(20)
         self._tree.setRootIsDecorated(False)   # 用自绘箭头 icon, 弃系统小箭头
-        self._tree.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
-        self._tree.customContextMenuRequested.connect(self._on_tree_menu)
-        self._tree.itemDoubleClicked.connect(self._on_double)
+        self._tree.setToolTip("单击模型名直接复制")
+        self._tree.itemClicked.connect(self._on_item_clicked)
         self._tree.itemExpanded.connect(lambda it: self._sync_arrow(it, True))
         self._tree.itemCollapsed.connect(lambda it: self._sync_arrow(it, False))
         self._text_px = max(80, w - 60)
@@ -329,7 +337,7 @@ class RightPanel(FloatingWindow):
         self._filter_q = ""
         self._font_root = QFont()
         self._font_root.setBold(True)
-        self._font_root.setPointSizeF(10.5)
+        self._font_root.setPixelSize(theme.FS_TREE_ROOT)
 
     # ---- 数据 ----
     def clear(self):
@@ -414,22 +422,20 @@ class RightPanel(FloatingWindow):
                     root.child(j).setHidden(False)
                 root.setHidden(False)
 
-    def _on_double(self, item, _col):
-        if item.parent() is not None:
-            full = item.toolTip(0)
-            if full and ":" in full:
-                self.copy_requested.emit(full)
-
-    def _on_tree_menu(self, pos):
-        item = self._tree.itemAt(pos)
-        if item is None or item.parent() is None:
+    # ---- 交互 ----
+    def _on_item_clicked(self, item, _col):
+        if item is None:
             return
+        if item.parent() is None:
+            # 根节点: 单击展开 / 收起
+            item.setExpanded(not item.isExpanded())
+            return
+        # 模型子行: 单击即复制
         full = item.toolTip(0)
-        m = QMenu(self)
-        act = m.addAction("复制模型名")
-        if m.exec(self._tree.viewport().mapToGlobal(pos)) is act:
-            if full:
-                self.copy_requested.emit(full)
+        if not full:
+            full = item.text(0)
+        if full and ":" in full:
+            self.copy_requested.emit(full)
 
     def remove_provider(self, name):
         target = (name or "").strip()
@@ -443,7 +449,7 @@ class RightPanel(FloatingWindow):
 # ---------------------------------------------------------------- 顶中: 代理开关
 
 class TopSwitch(FloatingWindow):
-    """顶部中央胶囊: 显示代理状态, 点击启停。"""
+    """顶部中央胶囊: 显示代理状态(不含提供商计数), 点击启停。"""
 
     toggle_requested = Signal()
 
@@ -451,21 +457,20 @@ class TopSwitch(FloatingWindow):
         super().__init__(w, h)
         inner = ClickableFrame(self.panel)
         inner.setCursor(Qt.CursorShape.PointingHandCursor)
+        inner.setToolTip("点击启停本地转发代理")
         inner.clicked.connect(self.toggle_requested)
         inner.setStyleSheet(
             f"ClickableFrame {{ background: {theme.BG_CARD}; border: 1px solid {theme.BORDER_STRONG};"
             f" border-radius: 16px; }}"
             f"ClickableFrame:hover {{ background: {theme.BG_CARD_HOVER}; }}")
-        row = _hbox((20, 0, 20, 0), spacing=9, parent=inner)
+        row = _hbox((18, 0, 18, 0), spacing=10, parent=inner)
         self._dot = dot_label(theme.GRAY_DOT, 10)
         row.addWidget(self._dot)
         self._label = QLabel("代理未运行")
-        self._style_label(theme.TEXT_DIM)
+        self._label.setStyleSheet(
+            f"color: {theme.TEXT_DIM}; background: transparent; border: none;"
+            f"font-size: {theme.FS_BASE}px; font-weight: 600;")
         row.addWidget(self._label)
-        self._sub = QLabel("")
-        self._sub.setStyleSheet(
-            f"color: {theme.TEXT_FAINT}; background: transparent; border: none; font-size: 12px;")
-        row.addWidget(self._sub)
         row.addStretch(1)
 
         lay = self.body()
@@ -473,22 +478,21 @@ class TopSwitch(FloatingWindow):
         lay.setSpacing(0)
         lay.addWidget(inner)
 
-    def _style_label(self, color):
-        self._label.setStyleSheet(
-            f"color: {color}; background: transparent; border: none; font-size: 13px;")
-
-    def set_state(self, running, port, provider_count):
-        self._sub.setText(f"{provider_count} 家")
+    def set_state(self, running, port):
         if running:
             self._dot.setStyleSheet(
                 f"background: {theme.GREEN}; border-radius: 5px; border: none;")
             self._label.setText(f"代理运行中 · {port}")
-            self._style_label(theme.GREEN)
+            self._label.setStyleSheet(
+                f"color: {theme.GREEN}; background: transparent; border: none;"
+                f"font-size: {theme.FS_BASE}px; font-weight: 600;")
         else:
             self._dot.setStyleSheet(
                 f"background: {theme.GRAY_DOT}; border-radius: 5px; border: none;")
             self._label.setText("代理未运行")
-            self._style_label(theme.TEXT_DIM)
+            self._label.setStyleSheet(
+                f"color: {theme.TEXT_DIM}; background: transparent; border: none;"
+                f"font-size: {theme.FS_BASE}px; font-weight: 600;")
 
 
 # ---------------------------------------------------------------- 底部: toast 日志
@@ -507,7 +511,7 @@ class ToastRow(QFrame):
 
     def __init__(self, level, text, width):
         super().__init__()
-        self.setFixedHeight(28)
+        self.setFixedHeight(30)
         self.setStyleSheet(
             f"ToastRow {{ background: transparent; border-radius: 6px; }}"
             f"ToastRow:hover {{ background: {theme.BG_CARD}; }}")
@@ -515,15 +519,18 @@ class ToastRow(QFrame):
         row.addWidget(dot_label(LEVEL_COLORS.get(level, theme.TEXT_FAINT), 6))
         ts = QLabel(time.strftime("%H:%M:%S"))
         ts.setStyleSheet(
-            f"color: {theme.TEXT_FAINT}; background: transparent; border: none; font-size: 11px;")
+            f"color: {theme.TEXT_FAINT}; background: transparent; border: none;"
+            f"font-size: {theme.FS_META}px;")
         row.addWidget(ts)
         msg = QLabel()
         fm = QFontMetrics(msg.font())
-        msg.setText(fm.elidedText(text, Qt.TextElideMode.ElideRight, max(60, width - 150)))
+        msg.setText(fm.elidedText(text, Qt.TextElideMode.ElideRight,
+                                  max(60, width - 150)))
         msg.setToolTip(text)
         c = theme.TEXT if level in ("info", "req") else LEVEL_COLORS.get(level, theme.TEXT)
         msg.setStyleSheet(
-            f"color: {c}; background: transparent; border: none; font-size: 12px;")
+            f"color: {c}; background: transparent; border: none;"
+            f"font-size: {theme.FS_LOG_TEXT}px;")
         row.addWidget(msg, 1)
 
     def fade_in(self, ms=200):
@@ -556,7 +563,7 @@ class LogDock(FloatingWindow):
     def append(self, level, text):
         row = ToastRow(level, text, self.width())
         item = QListWidgetItem()
-        item.setSizeHint(QSize(0, 30))
+        item.setSizeHint(QSize(0, 32))
         self._list.addItem(item)
         self._list.setItemWidget(item, row)
         row.fade_in()
