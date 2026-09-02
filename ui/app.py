@@ -22,6 +22,7 @@ from core.proxy import ProxyServer
 from . import theme
 from .panels import LeftPanel, RightPanel, TopSwitch, LogDock
 from .dialogs import ProviderDialog
+from .hotkey import GlobalHotkey
 
 # ---------------------------------------------------------------- 尺寸
 MARGIN = 14
@@ -70,7 +71,6 @@ class App(QObject):
             wid.move(t)
 
         # ---- 事件装配 ----
-        self.left.probe_requested.connect(self._do_probe)
         self.left.add_requested.connect(self._open_add)
         self.left.edit_requested.connect(self._open_edit)
         self.left.delete_requested.connect(self._delete_provider)
@@ -97,13 +97,23 @@ class App(QObject):
         if QSystemTrayIcon.isSystemTrayAvailable():
             self.tray.show()
 
+        # ---- 全局热键 Ctrl+Alt+M ----
+        self._hotkey = GlobalHotkey(self)
+        if self._hotkey.registered():
+            QApplication.instance().installNativeEventFilter(self._hotkey)
+            self._hotkey.toggled.connect(self._toggle_visible)
+            self.tray.showMessage("ModelView", "Ctrl+Alt+M 可随时显示/隐藏面板",
+                                  QSystemTrayIcon.MessageIcon.Information, 2500)
+        else:
+            self._nlog("全局热键注册失败(Ctrl+Alt+M 可能被占用), 仅托盘可唤回", "warn")
+
         # ---- 启动 ----
         self._refresh_providers()
         self._sync_top()
         if cfg.is_proxy_enabled():
             QTimer.singleShot(300, self._toggle_proxy)   # 恢复上次转发状态
         self._anim_to_targets(show=True)
-        self._nlog("ModelView 已就绪 · 托盘常驻 · 点击顶部胶囊可启停代理")
+        self._nlog("ModelView 已就绪 · Ctrl+Alt+M 显隐面板 · 点击顶部胶囊可启停代理")
 
     # ------------------------------------------------------------ 日志
     def _proxy_log_cb(self, msg):
@@ -115,14 +125,16 @@ class App(QObject):
 
     # ------------------------------------------------------------ 显隐 / 动画
     def _start_pos(self, wid):
+        """飞出/飞入前的屏外位置: 左翼→左、右翼→右、顶栏→上、日志条→下,
+        位移量 = 自身宽/高 + 60, 保证整块完全离开屏幕, 不留残余可见。"""
         t = self._targets[wid]
         if wid is self.left:
             return QPoint(t.x() - wid.width() - 60, t.y())
         if wid is self.right:
-            return QPoint(t.x() + 60, t.y())
+            return QPoint(t.x() + wid.width() + 60, t.y())
         if wid is self.top:
-            return QPoint(t.x(), t.y() - 60)
-        return QPoint(t.x(), t.y() + 60)
+            return QPoint(t.x(), t.y() - wid.height() - 60)
+        return QPoint(t.x(), t.y() + wid.height() + 60)
 
     def _anim_to_targets(self, show=True, done=None):
         if self._anim_busy:
@@ -221,9 +233,8 @@ class App(QObject):
         dlg.activateWindow()
 
     def _place_dialog(self, dlg):
-        # 贴左翼右侧居中, 不盖住中央桌面
-        dlg.center_on(self.left.pos().x() + LEFT_W + 140,
-                      self.left.pos().y() + self.left.height() // 2)
+        # 悬浮在屏幕正中心, 不随两翼位置偏移
+        dlg.center_on(self._geo.center().x(), self._geo.center().y())
 
     def _on_dialog_saved(self, name, url, key):
         dlg = self._dialog()
@@ -291,8 +302,7 @@ class App(QObject):
             self._nlog("还没有提供商 — 先在左翼点 \"+ 添加\"", "warn")
             return
         self._probing = True
-        self.left.set_probing(True)
-        self.right.set_pill_probing()
+        self.right.set_probing(True)
         threading.Thread(target=self._probe_worker, daemon=True).start()
 
     def _probe_worker(self):
@@ -304,7 +314,7 @@ class App(QObject):
 
     def _on_probe_done(self, items):
         self._probing = False
-        self.left.set_probing(False)
+        self.right.set_probing(False)
         stamp = time.strftime("%H:%M:%S")
         self.right.set_results(items, stamp=f"{time.strftime('%m-%d %H:%M')} · 点刷新可更新")
         ok = sum(1 for _n, _ids, err in items if not err)
@@ -360,6 +370,9 @@ class App(QObject):
             return
         self._quitting = True
         try:
+            if self._hotkey.registered():
+                QApplication.instance().removeNativeEventFilter(self._hotkey)
+                self._hotkey.release()
             self.tray.hide()
             self._proxy.stop()
         finally:

@@ -12,7 +12,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 BASE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, BASE)
 
-from PySide6.QtWidgets import QApplication  # noqa: E402
+from PySide6.QtWidgets import QApplication, QPushButton  # noqa: E402
 from PySide6.QtCore import QTimer  # noqa: E402
 
 PASS = []
@@ -49,6 +49,8 @@ def main():
     a._nlog("普通请求日志")
     app.processEvents()
     check("日志条可追加(>5 条)", a.logdock._list.count() >= 6)
+    check("左翼无探测按钮(探测归右翼)", not hasattr(a.left, "_btn_probe"))
+    check("右翼有刷新按钮(探测入口)", a.right._btn_refresh is not None)
 
     # 提供商 CRUD 全流程
     a._on_dialog_saved("", "http://x", "")            # 空 name → 弹错误, 不保存
@@ -61,6 +63,19 @@ def main():
     check("新增提供商 ds", len(cfg.get_providers()) == 1)
     app.processEvents()
     check("左翼显示卡片", len(a.left._cards) == 1)
+    card = list(a.left._cards.values())[0]
+    check("卡片直显 3 个操作按钮", len(card.findChildren(QPushButton)) == 3)
+
+    # 左翼搜索筛选
+    a.left._search.setText("ds")
+    app.processEvents()
+    check("搜索'ds'卡片可见", not card.isHidden())
+    a.left._search.setText("zzz-no-match")
+    app.processEvents()
+    check("搜索无匹配→隐藏+空态提示", card.isHidden() and a.left._empty.isVisible())
+    a.left._search.setText("")
+    app.processEvents()
+    check("清空搜索恢复可见", not card.isHidden())
     check("config 已持久化", os.path.exists(tmp) and "ds" in open(tmp, encoding="utf-8").read())
 
     a._on_dialog_saved("ds", "https://api.deepseek.com/v1", "k2")  # 重名 → 拦截
@@ -78,6 +93,18 @@ def main():
     a.right.set_results(items)
     app.processEvents()
     check("右翼树 2 根节点", a.right._tree.topLevelItemCount() == 2)
+
+    # 右翼搜索筛选
+    a.right._search.setText("ds:")
+    app.processEvents()
+    r0 = a.right._tree.topLevelItem(0)
+    r1 = a.right._tree.topLevelItem(1)
+    check("树搜索命中 ds→展开", not r0.isHidden() and r0.isExpanded())
+    check("树搜索未命中→隐藏", r1.isHidden())
+    a.right._search.setText("")
+    app.processEvents()
+    check("清空树搜索恢复", not r0.isHidden() and not r1.isHidden())
+
     a.right.remove_provider("ds")
     check("删除 ds 节点后剩 1", a.right._tree.topLevelItemCount() == 1)
 

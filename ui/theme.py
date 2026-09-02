@@ -107,6 +107,23 @@ QPushButton#danger:hover {{
     background: {RED_DIM};
     border-color: {RED_DIM};
 }}
+/* 卡片内操作小按钮(编辑/复制URL/删除) */
+QPushButton#cardAct, QPushButton#cardDanger {{
+    background: transparent;
+    border: none;
+    color: {TEXT_FAINT};
+    font-size: 11px;
+    padding: 2px 7px;
+    border-radius: 5px;
+}}
+QPushButton#cardAct:hover {{
+    background: {BG_SUNKEN};
+    color: {TEXT};
+}}
+QPushButton#cardDanger:hover {{
+    background: {RED_DIM};
+    color: #ffffff;
+}}
 /* 顶中胶囊开关 */
 QPushButton#capsule {{
     background: {BG_PANEL};

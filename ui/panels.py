@@ -2,23 +2,26 @@
 """ModelView 形态B: 悬浮面板组件。
 
 四个贴边悬浮块, 全部是「透明无边框顶层窗 + 实心圆角面板」:
-  - LeftPanel   左翼: 模型提供商列表
-  - RightPanel  右翼: 模型探测列表(树状折叠)
+  - LeftPanel   左翼: 模型提供商列表(卡片直显操作钮 + 搜索筛选)
+  - RightPanel  右翼: 模型探测列表(树状折叠 + 搜索筛选)
   - TopSwitch   顶部中央: 代理开关胶囊
   - LogDock     底部中央: toast 风格日志(可上下滚动, 新条渐显)
 
 面板本身只发信号 + 收简单回调, 业务装配由 ui.app.App 负责。
 """
 import time
-from PySide6.QtCore import Qt, Signal, QSize, QPropertyAnimation, QRectF
-from PySide6.QtGui import QFontMetrics, QColor, QPainterPath, QRegion
+from PySide6.QtCore import Qt, Signal, QSize, QPropertyAnimation, QRectF, QPoint
+from PySide6.QtGui import (QFontMetrics, QColor, QPainterPath, QRegion, QIcon,
+                           QPixmap, QPainter, QFont, QPolygon)
 from PySide6.QtWidgets import (
     QWidget, QFrame, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QScrollArea, QMenu, QTreeWidget, QTreeWidgetItem, QListWidget,
-    QListWidgetItem, QGraphicsOpacityEffect,
+    QListWidgetItem, QGraphicsOpacityEffect, QLineEdit,
 )
 
 from . import theme
+
+USER_ROLE = Qt.ItemDataRole.UserRole
 
 
 # ---------------------------------------------------------------- 通用小件
@@ -52,6 +55,16 @@ def ghost_button(text, tooltip=""):
     if tooltip:
         b.setToolTip(tooltip)
     return b
+
+
+def search_box(placeholder):
+    """通用筛选输入框: 深色槽位 + 清除按钮。"""
+    ed = QLineEdit()
+    ed.setObjectName("search")
+    ed.setPlaceholderText(placeholder)
+    ed.setClearButtonEnabled(True)
+    ed.setFixedHeight(28)
+    return ed
 
 
 class PanelTitle(QLabel):
@@ -120,57 +133,68 @@ class FloatingWindow(QWidget):
 # ---------------------------------------------------------------- 左翼: 提供商列表
 
 class ProviderCard(QFrame):
-    """提供商条目卡: hover 提亮, 双击编辑, 右键菜单。"""
+    """提供商卡片: name/url + 底部直显 编辑/复制URL/删除 操作条。
 
-    def __init__(self, provider, width, handlers):
+    不再依赖右键菜单, 双击卡片仍可快捷编辑。
+    """
+
+    def __init__(self, provider, width, on_edit, on_copy_url, on_delete):
         super().__init__()
         self._p = provider
-        self._handlers = handlers
-        self.setFixedHeight(46)
+        self._on_edit = on_edit
+        self.setFixedHeight(64)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         self.setStyleSheet(
             f"ProviderCard {{ background: {theme.BG_CARD}; border-radius: 8px; border: 1px solid transparent; }}"
-            f"ProviderCard:hover {{ background: {theme.BG_CARD_HOVER}; }}")
-        lay = _vbox((10, 8, 10, 8), spacing=1, parent=self)
+            f"ProviderCard:hover {{ background: {theme.BG_CARD_HOVER}; border: 1px solid {theme.BORDER}; }}")
+
+        lay = _vbox((12, 7, 12, 6), spacing=1, parent=self)
         name = QLabel(provider.get("name") or "?")
         name.setStyleSheet(
             f"color: {theme.TEXT}; font-size: 13px; background: transparent; border: none;")
+        lay.addWidget(name)
+
         url = QLabel()
         fm = QFontMetrics(url.font())
         full = provider.get("url") or ""
-        url.setText(fm.elidedText(full, Qt.TextElideMode.ElideMiddle, max(40, width - 60)))
-        url.setToolTip(full)
+        url.setText(fm.elidedText(full or "(无 url)", Qt.TextElideMode.ElideMiddle, max(40, width - 60)))
+        if full:
+            url.setToolTip(full)
         url.setStyleSheet(
             f"color: {theme.TEXT_FAINT}; font-size: 11px; background: transparent; border: none;")
-        lay.addWidget(name)
         lay.addWidget(url)
+
+        row = _hbox((0, 0, 0, 0), spacing=2)
+        row.addStretch(1)
+        btn_edit = self._act_btn("编辑", on_edit, "cardAct", "编辑提供商")
+        btn_copy = self._act_btn("复制 URL", on_copy_url, "cardAct", "复制提供商 URL")
+        btn_del = self._act_btn("删除", on_delete, "cardDanger", "删除提供商")
+        row.addWidget(btn_edit)
+        row.addWidget(btn_copy)
+        row.addWidget(btn_del)
+        lay.addLayout(row)
+
+    @staticmethod
+    def _act_btn(text, slot, obj_name, tip):
+        b = QPushButton(text)
+        b.setObjectName(obj_name)
+        b.setCursor(Qt.CursorShape.PointingHandCursor)
+        b.setToolTip(tip)
+        b.clicked.connect(slot)
+        return b
 
     def provider(self):
         return self._p
 
     def mouseDoubleClickEvent(self, e):
-        self._handlers.get("edit")(self._p)
+        if e.button() == Qt.MouseButton.LeftButton:
+            self._on_edit()
         super().mouseDoubleClickEvent(e)
-
-    def contextMenuEvent(self, e):
-        m = QMenu(self)
-        a_edit = m.addAction("编辑…")
-        a_copy = m.addAction("复制 URL")
-        m.addSeparator()
-        a_del = m.addAction("删除")
-        act = m.exec(e.globalPos())
-        if act is a_edit:
-            self._handlers.get("edit")(self._p)
-        elif act is a_copy:
-            self._handlers.get("copy_url")(self._p)
-        elif act is a_del:
-            self._handlers.get("delete")(self._p)
 
 
 class LeftPanel(FloatingWindow):
-    """左翼: 提供商列表 + 增删改入口 + 探测按钮。"""
+    """左翼: 提供商列表(卡片直显操作) + 搜索筛选。探测统一在右翼。"""
 
-    probe_requested = Signal()
     add_requested = Signal()
     edit_requested = Signal(str)
     delete_requested = Signal(str)
@@ -183,6 +207,10 @@ class LeftPanel(FloatingWindow):
         btn_add.clicked.connect(self.add_requested)
         self.header("提供商", self._pill, btn_add)
 
+        self._search = search_box("筛选提供商…")
+        self._search.textChanged.connect(self._apply_filter)
+        self.body().addWidget(self._search)
+
         holder = QWidget()
         holder.setStyleSheet("background: transparent;")
         self._card_col = _vbox((0, 0, 0, 0), spacing=4, parent=holder)
@@ -194,14 +222,20 @@ class LeftPanel(FloatingWindow):
         scroll.setWidget(holder)
         self.body().addWidget(scroll, 1)
 
-        self._btn_probe = QPushButton("探测全部提供商")
-        self._btn_probe.setCursor(Qt.CursorShape.PointingHandCursor)
-        self._btn_probe.clicked.connect(self.probe_requested)
-        self.body().addWidget(self._btn_probe)
-
         self._cards = {}
+        self._filter_q = ""
+        self._empty = None
 
     # ---- 数据 ----
+    def _show_empty(self, text):
+        if self._empty is None:
+            self._empty = QLabel()
+            self._empty.setStyleSheet(
+                f"color: {theme.TEXT_FAINT}; font-size: 12px; background: transparent; border: none;")
+            self._empty.setWordWrap(True)
+            self._card_col.insertWidget(self._card_col.count() - 1, self._empty)
+        self._empty.setText(text)
+
     def set_providers(self, providers):
         for card in list(self._cards.values()):
             card.setParent(None)
@@ -209,28 +243,34 @@ class LeftPanel(FloatingWindow):
         self._cards.clear()
         providers = list(providers or [])
         self._pill.setText(f"{len(providers)} 家")
-        if not providers:
-            empty = QLabel("还没有提供商 — 点右上 \"+ 添加\"")
-            empty.setStyleSheet(
-                f"color: {theme.TEXT_FAINT}; font-size: 12px; background: transparent; border: none;")
-            empty.setWordWrap(True)
-            self._card_col.insertWidget(self._card_col.count() - 1, empty)
-            return
         for p in providers:
-            card = ProviderCard(p, self.width(), self._handlers())
+            pid = p.get("id")
+            card = ProviderCard(p, self.width(),
+                                lambda pid=pid: self.edit_requested.emit(pid),
+                                lambda pid=pid: self.copy_url_requested.emit(pid),
+                                lambda pid=pid: self.delete_requested.emit(pid))
             self._card_col.insertWidget(self._card_col.count() - 1, card)
-            self._cards[p.get("id")] = card
+            self._cards[pid] = card
+        if not providers:
+            self._show_empty("还没有提供商 — 点右上 \"+ 添加\"")
+        elif self._empty is not None:
+            self._empty.hide()
+        self._apply_filter(self._filter_q)
 
-    def _handlers(self):
-        return {
-            "edit": lambda p: self.edit_requested.emit(p.get("id")),
-            "copy_url": lambda p: self.copy_url_requested.emit(p.get("id")),
-            "delete": lambda p: self.delete_requested.emit(p.get("id")),
-        }
-
-    def set_probing(self, busy):
-        self._btn_probe.setEnabled(not busy)
-        self._btn_probe.setText("探测中…" if busy else "探测全部提供商")
+    def _apply_filter(self, q):
+        self._filter_q = q
+        q = (q or "").strip().lower()
+        visible = 0
+        for pid, card in self._cards.items():
+            p = card.provider()
+            name = (p.get("name") or "").lower()
+            url = (p.get("url") or "").lower()
+            hit = (not q) or (q in name) or (q in url)
+            card.setVisible(hit)
+            visible += hit
+        if self._cards:
+            self._show_empty("无匹配的提供商" if not visible else "")
+            self._empty.setVisible(not visible)
 
 
 # ---------------------------------------------------------------- 右翼: 模型树
@@ -240,8 +280,25 @@ def _elide(text, px, font):
     return fm.elidedText(text, Qt.TextElideMode.ElideMiddle, max(60, px))
 
 
+def _arrow_icon(open_state, color=theme.TEXT_DIM):
+    """自绘 12x12 折叠箭头(▸/▾), 避免系统箭头在深色下看不清。"""
+    pm = QPixmap(12, 12)
+    pm.fill(Qt.GlobalColor.transparent)
+    p = QPainter(pm)
+    p.setRenderHint(QPainter.RenderHint.Antialiasing)
+    p.setPen(Qt.PenStyle.NoPen)
+    p.setBrush(QColor(color))
+    if open_state:  # ▾
+        pts = [QPoint(3, 4), QPoint(9, 4), QPoint(6, 9)]
+    else:           # ▸
+        pts = [QPoint(4, 3), QPoint(4, 9), QPoint(9, 6)]
+    p.drawPolygon(QPolygon(pts))
+    p.end()
+    return QIcon(pm)
+
+
 class RightPanel(FloatingWindow):
-    """右翼: 全部提供商的模型树(树状折叠, 双击复制 name:model)。"""
+    """右翼: 全部提供商的模型树(树状折叠, 双击复制 name:model, 支持筛选)。"""
 
     refresh_requested = Signal()
     copy_requested = Signal(str)
@@ -249,31 +306,56 @@ class RightPanel(FloatingWindow):
     def __init__(self, w, h):
         super().__init__(w, h)
         self._pill = Pill("未探测")
-        btn = ghost_button("刷新", "重新探测全部提供商")
-        btn.clicked.connect(self.refresh_requested)
-        self.header("模型", self._pill, btn)
+        self._btn_refresh = ghost_button("刷新", "重新探测全部提供商")
+        self._btn_refresh.clicked.connect(self.refresh_requested)
+        self.header("模型", self._pill, self._btn_refresh)
+
+        self._search = search_box("筛选模型…")
+        self._search.textChanged.connect(self._apply_filter)
+        self.body().addWidget(self._search)
 
         self._tree = QTreeWidget(self.panel)
         self._tree.setHeaderHidden(True)
-        self._tree.setIndentation(16)
-        self._tree.setRootIsDecorated(True)
+        self._tree.setIndentation(20)
+        self._tree.setRootIsDecorated(False)   # 用自绘箭头 icon, 弃系统小箭头
         self._tree.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self._tree.customContextMenuRequested.connect(self._on_tree_menu)
         self._tree.itemDoubleClicked.connect(self._on_double)
-        self._text_px = max(80, w - 48)
+        self._tree.itemExpanded.connect(lambda it: self._sync_arrow(it, True))
+        self._tree.itemCollapsed.connect(lambda it: self._sync_arrow(it, False))
+        self._text_px = max(80, w - 60)
         self.body().addWidget(self._tree, 1)
+
+        self._filter_q = ""
+        self._font_root = QFont()
+        self._font_root.setBold(True)
+        self._font_root.setPointSizeF(10.5)
 
     # ---- 数据 ----
     def clear(self):
         self._tree.clear()
         self._pill.setText("未探测")
 
-    def set_pill_probing(self):
-        self._pill.setText("探测中…")
-
     def set_pill_stale(self):
         if self._tree.topLevelItemCount():
             self._pill.setText("缓存失效 · 点刷新")
+
+    def set_probing(self, busy):
+        self._btn_refresh.setEnabled(not busy)
+        self._pill.setText("探测中…" if busy else "模型")
+
+    def _sync_arrow(self, item, open_state):
+        if item is not None and item.parent() is None:
+            item.setIcon(0, _arrow_icon(open_state))
+
+    def _make_root(self, label, color, hint=""):
+        root = QTreeWidgetItem()
+        root.setText(0, label)
+        root.setForeground(0, QColor(color))
+        root.setFont(0, self._font_root)
+        root.setIcon(0, _arrow_icon(False))
+        root.setData(0, USER_ROLE, hint)
+        return root
 
     def set_results(self, items, stamp=""):
         """items: [(name, model_ids, error_or_None), ...]"""
@@ -281,29 +363,56 @@ class RightPanel(FloatingWindow):
         total = ok = 0
         for name, ids, err in items or []:
             if err:
-                root = QTreeWidgetItem([f"{name} · 探测失败"])
-                root.setForeground(0, QColor(theme.RED))
-                child = QTreeWidgetItem([_elide(f"原因: {err}", self._text_px, self._tree.font())])
+                root = self._make_root(f"{name} · 探测失败", theme.RED, name)
+                child = QTreeWidgetItem(
+                    [_elide(f"原因: {err}", self._text_px, self._tree.font())])
                 child.setForeground(0, QColor(theme.TEXT_DIM))
                 child.setToolTip(0, err)
+                child.setData(0, USER_ROLE, "")
                 root.addChild(child)
             else:
                 ok += 1
-                root = QTreeWidgetItem([f"{name} · {len(ids)} 个模型"])
-                root.setForeground(0, QColor(theme.TEXT))
-                for mid in ids or []:
+                models = ids or []
+                root = self._make_root(f"{name} · {len(models)} 个模型",
+                                       theme.TEXT, name)
+                for mid in models:
                     label = f"{name}:{mid}"
                     child = QTreeWidgetItem([_elide(label, self._text_px, self._tree.font())])
                     child.setForeground(0, QColor(theme.TEXT_DIM))
                     child.setToolTip(0, label)
+                    child.setData(0, USER_ROLE, label.lower())
                     root.addChild(child)
-                total += len(ids or [])
+                total += len(models)
             self._tree.addTopLevelItem(root)
             root.setExpanded(False)
         if items:
             self._pill.setText(stamp or f"{ok} 家 / {total} 个")
         else:
             self._pill.setText("未探测")
+        self._apply_filter(self._filter_q)
+
+    def _apply_filter(self, q):
+        self._filter_q = q
+        q = (q or "").strip().lower()
+        for i in range(self._tree.topLevelItemCount()):
+            root = self._tree.topLevelItem(i)
+            name = (root.data(0, USER_ROLE) or "").lower()
+            if q:
+                name_hit = q in name
+                matched_children = 0
+                for j in range(root.childCount()):
+                    ch = root.child(j)
+                    hay = (ch.data(0, USER_ROLE) or "").lower()
+                    hit = (not q) or (q in hay) or name_hit
+                    ch.setHidden(not hit)
+                    matched_children += hit
+                root.setHidden(not (name_hit or matched_children))
+                if name_hit or matched_children:
+                    root.setExpanded(True)
+            else:
+                for j in range(root.childCount()):
+                    root.child(j).setHidden(False)
+                root.setHidden(False)
 
     def _on_double(self, item, _col):
         if item.parent() is not None:
@@ -323,10 +432,10 @@ class RightPanel(FloatingWindow):
                 self.copy_requested.emit(full)
 
     def remove_provider(self, name):
-        prefix = name + " ·"
+        target = (name or "").strip()
         for i in range(self._tree.topLevelItemCount()):
             it = self._tree.topLevelItem(i)
-            if (it.text(0) or "").startswith(prefix):
+            if (it.data(0, USER_ROLE) or "").strip() == target:
                 self._tree.takeTopLevelItem(i)
                 return
 
