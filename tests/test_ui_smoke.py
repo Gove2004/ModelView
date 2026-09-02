@@ -51,6 +51,11 @@ def main():
     a._nlog("普通请求日志")
     app.processEvents()
     check("日志条可追加(>5 条)", a.logdock._list.count() >= 6)
+    # 日志行高: 单条 22px + 1 spacing, LOG_H=190 → 视口至少可见 5 条
+    vh = a.logdock._list.viewport().height()
+    item_h = a.logdock._list.item(0).sizeHint().height()
+    visible = vh // (item_h + a.logdock._list.spacing())
+    check(f"日志视口可见 ≥5 条(实际 {visible})", visible >= 5)
     check("左翼无探测按钮(探测归右翼)", not hasattr(a.left, "_btn_probe"))
     check("右翼有刷新按钮(探测入口)", a.right._btn_refresh is not None)
 
@@ -66,7 +71,9 @@ def main():
     app.processEvents()
     check("左翼显示卡片", len(a.left._cards) == 1)
     card = list(a.left._cards.values())[0]
-    check("卡片直显 3 个操作按钮", len(card.findChildren(QPushButton)) == 3)
+    check("卡片直显 2 个操作按钮", len(card.findChildren(QPushButton)) == 2)
+    check("左翼标题带计数 提供商(1家)",
+          a.left._title_lab.text() == "提供商(1家)")
 
     # 卡片操作按钮点击链路(clicked 携带 checked 参数, 不得顶替 pid)
     btns = {b.text(): b for b in card.findChildren(QPushButton)}
@@ -75,11 +82,7 @@ def main():
     check("点[编辑]打开弹层且预填", a._dlg is not None
           and a._dlg._name.text() == "ds" and not a._dlg.isHidden())
     a._dlg.hide()
-    QApplication.clipboard().setText("")
-    btns["复制 URL"].click()
-    app.processEvents()
-    check("点[复制URL]写入剪贴板",
-          QApplication.clipboard().text() == "https://api.deepseek.com/v1")
+    check("卡片无[复制URL]按钮", "复制 URL" not in btns)
 
     # 左翼搜索筛选
     a.left._search.setText("ds")
@@ -108,6 +111,9 @@ def main():
     a.right.set_results(items)
     app.processEvents()
     check("右翼树 2 根节点", a.right._tree.topLevelItemCount() == 2)
+    check("右翼标题带计数 模型(2个)",
+          a.right._title_lab.text() == "模型(2个)")
+    check("右翼正常结果隐藏状态 pill", a.right._pill.isHidden())
 
     # 右栏: 单击模型行即复制 / 单击根节点切换展开
     root0 = a.right._tree.topLevelItem(0)

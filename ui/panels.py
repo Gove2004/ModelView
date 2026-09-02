@@ -122,9 +122,13 @@ class FloatingWindow(QWidget):
         return self._body
 
     def header(self, title, *trailing):
-        """标题行: PanelTitle + spacer + 若干尾部件。返回尾部件列表便于连信号。"""
+        """标题行: PanelTitle + spacer + 若干尾部件。返回尾部件列表便于连信号。
+
+        标题文字可后续通过 self._title_lab.setText(...) 更新(含计数)。
+        """
         row = _hbox((0, 0, 0, 0), spacing=6)
-        row.addWidget(PanelTitle(title))
+        self._title_lab = PanelTitle(title)
+        row.addWidget(self._title_lab)
         row.addStretch(1)
         for wid in trailing:
             row.addWidget(wid)
@@ -135,13 +139,13 @@ class FloatingWindow(QWidget):
 # ---------------------------------------------------------------- 左翼: 提供商列表
 
 class ProviderCard(QFrame):
-    """提供商卡片: name/url + 底部直显 编辑/复制URL/删除 操作条。
+    """提供商卡片: name/url + 底部直显 编辑/删除 操作条。
 
     注意: QPushButton.clicked 自带一个 checked 参数, connect 到带形参的
     lambda 时会被顶替 —— 这里统一在 _act_btn 内部用外层 lambda 吞掉它。
     """
 
-    def __init__(self, provider, width, on_edit, on_copy_url, on_delete):
+    def __init__(self, provider, width, on_edit, on_delete):
         super().__init__()
         self._p = provider
         self._on_edit = on_edit
@@ -173,7 +177,6 @@ class ProviderCard(QFrame):
         row = _hbox((0, 0, 0, 0), spacing=4)
         row.addStretch(1)
         row.addWidget(self._act_btn("编辑", on_edit, "cardAct", "编辑提供商"))
-        row.addWidget(self._act_btn("复制 URL", on_copy_url, "cardAct", "复制提供商 URL"))
         row.addWidget(self._act_btn("删除", on_delete, "cardDanger", "删除提供商"))
         lay.addLayout(row)
 
@@ -202,14 +205,12 @@ class LeftPanel(FloatingWindow):
     add_requested = Signal()
     edit_requested = Signal(str)
     delete_requested = Signal(str)
-    copy_url_requested = Signal(str)
 
     def __init__(self, w, h):
         super().__init__(w, h)
-        self._pill = Pill()
-        btn_add = ghost_button("+ 添加", "新增提供商")
+        btn_add = ghost_button("添加", "新增提供商")
         btn_add.clicked.connect(self.add_requested)
-        self.header("提供商", self._pill, btn_add)
+        self.header("提供商", btn_add)
 
         self._search = search_box("筛选提供商…")
         self._search.textChanged.connect(self._apply_filter)
@@ -229,6 +230,7 @@ class LeftPanel(FloatingWindow):
         self._cards = {}
         self._filter_q = ""
         self._empty = None
+        self._title_lab.setText("提供商(0家)")
 
     # ---- 数据 ----
     def _show_empty(self, text):
@@ -247,17 +249,16 @@ class LeftPanel(FloatingWindow):
             card.deleteLater()
         self._cards.clear()
         providers = list(providers or [])
-        self._pill.setText(f"{len(providers)} 家")
+        self._title_lab.setText(f"提供商({len(providers)}家)")
         for p in providers:
             pid = p.get("id")
             card = ProviderCard(p, self.width(),
                                 lambda pid=pid: self.edit_requested.emit(pid),
-                                lambda pid=pid: self.copy_url_requested.emit(pid),
                                 lambda pid=pid: self.delete_requested.emit(pid))
             self._card_col.insertWidget(self._card_col.count() - 1, card)
             self._cards[pid] = card
         if not providers:
-            self._show_empty("还没有提供商 — 点右上 \"+ 添加\"")
+            self._show_empty("还没有提供商 — 点右上 \"添加\"")
         elif self._empty is not None:
             self._empty.hide()
         self._apply_filter(self._filter_q)
@@ -305,8 +306,10 @@ def _arrow_icon(open_state, color=theme.TEXT_DIM):
 class RightPanel(FloatingWindow):
     """右翼: 全部提供商的模型树。
 
+    - 标题带计数: 模型(x个), x = 当前树内模型行总数(成功根节点子行)
     - 根节点(提供商): 单击展开 / 收起
     - 模型子行: 单击即复制 name:model(不必右键), 复制后走 copy_requested
+    - pill 仅承载状态: 未探测 / 探测中… / 缓存失效, 有正常结果时隐藏
     """
 
     refresh_requested = Signal()
@@ -340,17 +343,39 @@ class RightPanel(FloatingWindow):
         self._font_root.setPixelSize(theme.FS_TREE_ROOT)
 
     # ---- 数据 ----
+    def _model_total(self):
+        """树内模型子行数: 仅统计有 UserRole 文案的子行(错误根节点的
+        \"原因:\" 子行为空 role, 不计)。"""
+        n = 0
+        for i in range(self._tree.topLevelItemCount()):
+            root = self._tree.topLevelItem(i)
+            for j in range(root.childCount()):
+                if (root.child(j).data(0, USER_ROLE) or ""):
+                    n += 1
+        return n
+
+    def _sync_title(self):
+        if self._tree.topLevelItemCount():
+            self._title_lab.setText(f"模型({self._model_total()}个)")
+        else:
+            self._title_lab.setText("模型")
+            self._pill.setText("未探测")
+            self._pill.show()
+
     def clear(self):
         self._tree.clear()
-        self._pill.setText("未探测")
+        self._sync_title()
 
     def set_pill_stale(self):
         if self._tree.topLevelItemCount():
             self._pill.setText("缓存失效 · 点刷新")
+            self._pill.show()
 
     def set_probing(self, busy):
         self._btn_refresh.setEnabled(not busy)
-        self._pill.setText("探测中…" if busy else "模型")
+        if busy:
+            self._pill.setText("探测中…")
+            self._pill.show()
 
     def _sync_arrow(self, item, open_state):
         if item is not None and item.parent() is None:
@@ -368,7 +393,7 @@ class RightPanel(FloatingWindow):
     def set_results(self, items, stamp=""):
         """items: [(name, model_ids, error_or_None), ...]"""
         self._tree.clear()
-        total = ok = 0
+        ok = 0
         for name, ids, err in items or []:
             if err:
                 root = self._make_root(f"{name} · 探测失败", theme.RED, name)
@@ -390,13 +415,15 @@ class RightPanel(FloatingWindow):
                     child.setToolTip(0, label)
                     child.setData(0, USER_ROLE, label.lower())
                     root.addChild(child)
-                total += len(models)
             self._tree.addTopLevelItem(root)
             root.setExpanded(False)
+        self._pill.hide()
         if items:
-            self._pill.setText(stamp or f"{ok} 家 / {total} 个")
+            self._sync_title()
         else:
+            self._title_lab.setText("模型")
             self._pill.setText("未探测")
+            self._pill.show()
         self._apply_filter(self._filter_q)
 
     def _apply_filter(self, q):
@@ -443,6 +470,7 @@ class RightPanel(FloatingWindow):
             it = self._tree.topLevelItem(i)
             if (it.data(0, USER_ROLE) or "").strip() == target:
                 self._tree.takeTopLevelItem(i)
+                self._sync_title()
                 return
 
 
@@ -507,15 +535,15 @@ LEVEL_COLORS = {
 
 
 class ToastRow(QFrame):
-    """一条日志: 色点 + 时间 + 文本, 渐显进场。"""
+    """一条日志: 色点 + 时间 + 文本, 渐显进场。行高紧凑, 一页多显几条。"""
 
     def __init__(self, level, text, width):
         super().__init__()
-        self.setFixedHeight(30)
+        self.setFixedHeight(22)
         self.setStyleSheet(
             f"ToastRow {{ background: transparent; border-radius: 6px; }}"
             f"ToastRow:hover {{ background: {theme.BG_CARD}; }}")
-        row = _hbox((8, 0, 10, 0), spacing=8, parent=self)
+        row = _hbox((6, 0, 8, 0), spacing=6, parent=self)
         row.addWidget(dot_label(LEVEL_COLORS.get(level, theme.TEXT_FAINT), 6))
         ts = QLabel(time.strftime("%H:%M:%S"))
         ts.setStyleSheet(
@@ -555,7 +583,7 @@ class LogDock(FloatingWindow):
         btn.clicked.connect(self.clear)
         self.header("日志", btn)
         self._list = QListWidget(self.panel)
-        self._list.setSpacing(2)
+        self._list.setSpacing(1)
         self._list.setUniformItemSizes(True)
         self._list.setVerticalScrollMode(QListWidget.ScrollMode.ScrollPerPixel)
         self.body().addWidget(self._list, 1)
@@ -563,7 +591,7 @@ class LogDock(FloatingWindow):
     def append(self, level, text):
         row = ToastRow(level, text, self.width())
         item = QListWidgetItem()
-        item.setSizeHint(QSize(0, 32))
+        item.setSizeHint(QSize(0, 22))
         self._list.addItem(item)
         self._list.setItemWidget(item, row)
         row.fade_in()

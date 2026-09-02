@@ -27,7 +27,7 @@ from .hotkey import GlobalHotkey
 # ---------------------------------------------------------------- 尺寸
 MARGIN = 14
 CAP_W, CAP_H = 250, 40
-LOG_W, LOG_H = 560, 152
+LOG_W, LOG_H = 560, 190
 LEFT_W, RIGHT_W = 292, 330
 
 
@@ -75,7 +75,6 @@ class App(QObject):
         self.left.add_requested.connect(self._open_add)
         self.left.edit_requested.connect(self._open_edit)
         self.left.delete_requested.connect(self._delete_provider)
-        self.left.copy_url_requested.connect(self._copy_provider_url)
         self.right.refresh_requested.connect(self._do_probe)
         self.right.copy_requested.connect(self._copy_model)
         self.top.toggle_requested.connect(self._toggle_proxy)
@@ -291,13 +290,6 @@ class App(QObject):
         self._refresh_providers()
         self._nlog(f"已删除提供商: {p.get('name')}", "warn")
 
-    def _copy_provider_url(self, pid):
-        p = self.cfg.get_provider(pid)
-        if p is None:
-            return
-        QApplication.clipboard().setText(p.get("url", ""))
-        self._nlog(f"已复制 URL: {p.get('url', '')}", "ok")
-
     def _copy_model(self, label):
         QApplication.clipboard().setText(label)
         self._nlog(f"已复制模型名: {label}", "ok")
@@ -307,7 +299,7 @@ class App(QObject):
         if self._probing:
             return
         if not self.cfg.get_providers():
-            self._nlog("还没有提供商 — 先在左翼点 \"+ 添加\"", "warn")
+            self._nlog("还没有提供商 — 先在左翼点 \"添加\"", "warn")
             return
         self._probing = True
         self.right.set_probing(True)

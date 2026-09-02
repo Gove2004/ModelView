@@ -116,7 +116,7 @@ QPushButton#ghost:hover {{
     color: {TEXT};
     background: {BG_CARD};
 }}
-/* 卡片内操作小按钮(编辑/复制URL/删除) */
+/* 卡片内操作小按钮(编辑/删除) */
 QPushButton#cardAct, QPushButton#cardDanger {{
     background: transparent;
     border: none;
