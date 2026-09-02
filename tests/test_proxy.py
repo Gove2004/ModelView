@@ -19,9 +19,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 if hasattr(sys.stdout, "reconfigure"):  # 控制台按 UTF-8 输出,避免中文乱码
     sys.stdout.reconfigure(encoding="utf-8")
 
-from config import Config  # noqa: E402
-from provider import ProviderError, probe_models  # noqa: E402
-from proxy import ProxyServer, build_target_url, resolve_provider  # noqa: E402
+from core.config import Config  # noqa: E402
+from core.provider import ProviderError, probe_models  # noqa: E402
+from core.proxy import ProxyServer, build_target_url, resolve_provider  # noqa: E402
 
 
 # ---------- 假上游服务 ----------

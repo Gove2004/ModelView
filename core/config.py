@@ -16,7 +16,9 @@ import os
 import threading
 import uuid
 
-CONFIG_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "config.json")
+# config.json 固定在项目根目录(core/ 的上一级),不随本文件所在包变化
+_PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+CONFIG_PATH = os.path.join(_PROJECT_ROOT, "config.json")
 
 DEFAULTS = {
     "port": 10901,

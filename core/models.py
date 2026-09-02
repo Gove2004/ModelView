@@ -4,7 +4,7 @@ import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 
-from provider import probe_models
+from .provider import probe_models
 
 CACHE_TTL = 60  # 聚合结果缓存秒数
 

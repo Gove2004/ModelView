@@ -1,7 +1,10 @@
 # -*- coding: utf-8 -*-
-"""LLM 代理工具入口。
+"""ModelView · 模型视图 —— 入口。
 
-以 pythonw.exe 运行时无控制台窗口,出错信息写入 error.log。
+以 pythonw.exe 运行时无控制台窗口, 出错信息写入 error.log。
+用法:
+  双击 启动.vbs        (推荐: 无控制台 + 托盘常驻)
+  或命令行 .venv\\Scripts\\python.exe main.py
 """
 import os
 import sys
@@ -20,42 +23,56 @@ def _write_error():
 
 
 def main():
-    # 无控制台环境下全局异常也落盘
     sys.excepthook = lambda *a: (traceback.print_exception(*a), _write_error())
 
-    if sys.version_info < (3, 8):
-        _write_error()
-        return
+    # 关闭 Qt 高分屏相关的过时警告(Windows 上 Qt6 已默认按需缩放)
+    os.environ.setdefault("QT_ENABLE_HIGHDPI_SCALING", "1")
 
     try:
-        import tkinter  # noqa: F401
+        from PySide6.QtWidgets import QApplication
+        from PySide6.QtCore import Qt
     except ImportError:
         try:
             with open(ERROR_LOG, "w", encoding="utf-8") as f:
-                f.write("未找到 tkinter,请安装带 GUI 支持的 Python 后重试。")
+                f.write("缺少 PySide6, 请先运行: .venv\\Scripts\\python.exe -m pip install PySide6\n"
+                        "或重新执行 安装依赖.bat。")
         except Exception:
             pass
         return
 
-    # Windows 高分屏下让界面不模糊
+    from core.config import Config
+    from ui.theme import qss
+
+    app = QApplication(sys.argv)
+    app.setApplicationName("ModelView")
+    app.setApplicationDisplayName("ModelView · 模型视图")
+    app.setStyle("Fusion")
+    app.setStyleSheet(qss())
+
+    # Fusion 深色基调兜底
+    from PySide6.QtGui import QPalette, QColor
+    pal = QPalette()
+    pal.setColor(QPalette.ColorRole.Window, QColor("#1a1e28"))
+    pal.setColor(QPalette.ColorRole.WindowText, QColor("#dce2ee"))
+    pal.setColor(QPalette.ColorRole.Base, QColor("#1a1e28"))
+    pal.setColor(QPalette.ColorRole.Text, QColor("#dce2ee"))
+    app.setPalette(pal)
+
     try:
-        import ctypes
-        ctypes.windll.shcore.SetProcessDpiAwareness(1)
-    except Exception:
-        pass
-
-    import tkinter as tk
-
-    from config import Config
-    from gui import App
-
-    try:
+        from ui.app import App
         cfg = Config()
-        root = tk.Tk()
-        App(root, cfg)
-        root.mainloop()
+        controller = App(cfg)
+        app.aboutToQuit.connect(controller.quit)
+        # 自检/CI: MV_AUTOCLOSE_MS=3000 时 3 秒后自动退出
+        auto = os.environ.get("MV_AUTOCLOSE_MS")
+        if auto:
+            from PySide6.QtCore import QTimer
+            QTimer.singleShot(int(auto), app.quit)
+        code = app.exec()
+        sys.exit(code)
     except Exception:
         _write_error()
+        sys.exit(1)
 
 
 if __name__ == "__main__":

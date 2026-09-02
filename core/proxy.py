@@ -14,8 +14,8 @@ import urllib.parse
 import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-from models import ModelsCache
-from provider import BROWSER_UA
+from .models import ModelsCache
+from .provider import BROWSER_UA
 
 UPSTREAM_TIMEOUT = 600  # 上游请求超时(秒);流式场景下按每次读超时计算
 
