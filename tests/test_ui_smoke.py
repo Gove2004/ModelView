@@ -59,7 +59,7 @@ def main():
     check("左翼无探测按钮(探测归右翼)", not hasattr(a.left, "_btn_probe"))
     check("右翼有探测按钮(探测入口)", a.right._btn_refresh is not None)
     check("右翼按钮文案为'探测'(非'刷新')", a.right._btn_refresh.text() == "探测")
-    check("右翼初始无'未探测'pill", a.right._pill.isHidden())
+    check("右翼无状态 pill(标题行干净)", not hasattr(a.right, "_pill"))
 
     # 提供商 CRUD 全流程
     a._on_dialog_saved("", "http://x", "")            # 空 name → 弹错误, 不保存
@@ -115,7 +115,6 @@ def main():
     check("右翼树 2 根节点", a.right._tree.topLevelItemCount() == 2)
     check("右翼标题带计数 模型(2个)",
           a.right._title_lab.text() == "模型(2个)")
-    check("右翼正常结果隐藏状态 pill", a.right._pill.isHidden())
 
     # 右栏: 单击模型行即复制 / 单击根节点切换展开
     root0 = a.right._tree.topLevelItem(0)

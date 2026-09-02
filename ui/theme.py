@@ -70,14 +70,6 @@ QLabel#panelTitle {{
     color: {TEXT_DIM};
     letter-spacing: 1px;
 }}
-QLabel#pill {{
-    background: {BG_SUNKEN};
-    border: 1px solid {BORDER};
-    border-radius: 8px;
-    padding: 2px 9px;
-    font-size: {FS_PILL}px;
-    color: {TEXT_DIM};
-}}
 /* 主按钮: 扁平实心 */
 QPushButton {{
     background: {BG_CARD};

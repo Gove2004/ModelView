@@ -274,10 +274,8 @@ class App(QObject):
         dlg.hide()
 
     def _after_provider_change(self):
-        self._proxy.models_cache.invalidate()
+        self._proxy.models_cache.invalidate()   # 代理 /models 缓存作废,下次请求自动重探
         self._refresh_providers()
-        # 树保留旧数据但提示缓存失效(下次 /models 或探测即刷新)
-        self.right.set_pill_stale()
 
     def _delete_provider(self, pid):
         p = self.cfg.get_provider(pid)

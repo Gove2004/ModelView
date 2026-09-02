@@ -85,12 +85,6 @@ def PanelTitle(text):
     return lab
 
 
-def Pill(text=""):
-    lab = QLabel(text)
-    lab.setObjectName("pill")
-    return lab
-
-
 class ClickableFrame(QFrame):
     """点击整块触发的 frame(需子类化才能收到事件)。"""
 
@@ -317,7 +311,7 @@ class RightPanel(FloatingWindow):
     - 标题带计数: 模型(x个), x = 当前树内模型行总数(成功根节点子行)
     - 根节点(提供商): 单击展开 / 收起
     - 模型子行: 单击即复制 name:model(不必右键), 复制后走 copy_requested
-    - pill 仅承载动态状态: 探测中… / 缓存失效, 空闲(含未探测)不显示
+    标题行只留 标题 + 探测 按钮, 无状态 pill(保持干净)。
     """
 
     refresh_requested = Signal()
@@ -325,11 +319,9 @@ class RightPanel(FloatingWindow):
 
     def __init__(self, w, h):
         super().__init__(w, h)
-        self._pill = Pill("")
-        self._pill.hide()
         self._btn_refresh = ghost_button("探测", "探测全部提供商的可用模型")
         self._btn_refresh.clicked.connect(self.refresh_requested)
-        self.header("模型", self._pill, self._btn_refresh)
+        self.header("模型", self._btn_refresh)
 
         self._search = search_box("筛选模型…")
         self._search.textChanged.connect(self._apply_filter)
@@ -368,22 +360,14 @@ class RightPanel(FloatingWindow):
             self._title_lab.setText(f"模型({self._model_total()}个)")
         else:
             self._title_lab.setText("模型")
-            self._pill.hide()
 
     def clear(self):
         self._tree.clear()
         self._sync_title()
 
-    def set_pill_stale(self):
-        if self._tree.topLevelItemCount():
-            self._pill.setText("缓存失效 · 点探测")
-            self._pill.show()
-
     def set_probing(self, busy):
+        # 探测期间禁用按钮防重入(逻辑层另有 _probing 兜底)
         self._btn_refresh.setEnabled(not busy)
-        if busy:
-            self._pill.setText("探测中…")
-            self._pill.show()
 
     def _sync_arrow(self, item, open_state):
         if item is not None and item.parent() is None:
@@ -401,7 +385,6 @@ class RightPanel(FloatingWindow):
     def set_results(self, items, stamp=""):
         """items: [(name, model_ids, error_or_None), ...]"""
         self._tree.clear()
-        ok = 0
         for name, ids, err in items or []:
             if err:
                 root = self._make_root(f"{name} · 探测失败", theme.RED, name)
@@ -412,7 +395,6 @@ class RightPanel(FloatingWindow):
                 child.setData(0, USER_ROLE, "")
                 root.addChild(child)
             else:
-                ok += 1
                 models = ids or []
                 root = self._make_root(f"{name} · {len(models)} 个模型",
                                        theme.TEXT, name)
@@ -425,12 +407,10 @@ class RightPanel(FloatingWindow):
                     root.addChild(child)
             self._tree.addTopLevelItem(root)
             root.setExpanded(False)
-        self._pill.hide()
         if items:
             self._sync_title()
         else:
             self._title_lab.setText("模型")
-            self._pill.hide()
         self._apply_filter(self._filter_q)
 
     def _apply_filter(self, q):
