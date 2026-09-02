@@ -317,7 +317,7 @@ class RightPanel(FloatingWindow):
     - 标题带计数: 模型(x个), x = 当前树内模型行总数(成功根节点子行)
     - 根节点(提供商): 单击展开 / 收起
     - 模型子行: 单击即复制 name:model(不必右键), 复制后走 copy_requested
-    - pill 仅承载状态: 未探测 / 探测中… / 缓存失效, 有正常结果时隐藏
+    - pill 仅承载动态状态: 探测中… / 缓存失效, 空闲(含未探测)不显示
     """
 
     refresh_requested = Signal()
@@ -325,7 +325,8 @@ class RightPanel(FloatingWindow):
 
     def __init__(self, w, h):
         super().__init__(w, h)
-        self._pill = Pill("未探测")
+        self._pill = Pill("")
+        self._pill.hide()
         self._btn_refresh = ghost_button("探测", "探测全部提供商的可用模型")
         self._btn_refresh.clicked.connect(self.refresh_requested)
         self.header("模型", self._pill, self._btn_refresh)
@@ -367,8 +368,7 @@ class RightPanel(FloatingWindow):
             self._title_lab.setText(f"模型({self._model_total()}个)")
         else:
             self._title_lab.setText("模型")
-            self._pill.setText("未探测")
-            self._pill.show()
+            self._pill.hide()
 
     def clear(self):
         self._tree.clear()
@@ -376,7 +376,7 @@ class RightPanel(FloatingWindow):
 
     def set_pill_stale(self):
         if self._tree.topLevelItemCount():
-            self._pill.setText("缓存失效 · 点刷新")
+            self._pill.setText("缓存失效 · 点探测")
             self._pill.show()
 
     def set_probing(self, busy):
@@ -430,8 +430,7 @@ class RightPanel(FloatingWindow):
             self._sync_title()
         else:
             self._title_lab.setText("模型")
-            self._pill.setText("未探测")
-            self._pill.show()
+            self._pill.hide()
         self._apply_filter(self._filter_q)
 
     def _apply_filter(self, q):
