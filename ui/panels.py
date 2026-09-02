@@ -53,8 +53,16 @@ def dot_label(color, size=8):
 
 
 def ghost_button(text, tooltip=""):
+    """无背景小按钮(标题行尾的「添加 / 探测 / 清空」)。
+
+    注意: Qt 6 在 Windows 下, QPushButton 默认走 native 风格会画一层深色
+    按钮框, 把 QSS `background: transparent` 整个吃掉, 渲染成纯黑块。
+    显式 setFlat(True) 去掉 native frame 后, QSS 透明背景与文字颜色
+    才能正常生效。
+    """
     b = QPushButton(text)
     b.setObjectName("ghost")
+    b.setFlat(True)
     b.setCursor(Qt.CursorShape.PointingHandCursor)
     if tooltip:
         b.setToolTip(tooltip)
@@ -318,7 +326,7 @@ class RightPanel(FloatingWindow):
     def __init__(self, w, h):
         super().__init__(w, h)
         self._pill = Pill("未探测")
-        self._btn_refresh = ghost_button("刷新", "重新探测全部提供商")
+        self._btn_refresh = ghost_button("探测", "探测全部提供商的可用模型")
         self._btn_refresh.clicked.connect(self.refresh_requested)
         self.header("模型", self._pill, self._btn_refresh)
 

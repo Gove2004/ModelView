@@ -316,7 +316,7 @@ class App(QObject):
         self._probing = False
         self.right.set_probing(False)
         stamp = time.strftime("%H:%M:%S")
-        self.right.set_results(items, stamp=f"{time.strftime('%m-%d %H:%M')} · 点刷新可更新")
+        self.right.set_results(items, stamp=f"{time.strftime('%m-%d %H:%M')} · 点探测可更新")
         ok = sum(1 for _n, _ids, err in items if not err)
         fail = len(items) - ok
         total = sum(len(ids) for _n, ids, _err in items)
