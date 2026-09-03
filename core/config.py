@@ -8,8 +8,14 @@
   "providers": [              # 提供商列表,可保存多个
     {"id": "...", "name": "...", "url": "...", "key": "..."}
   ],
-  "active_provider_id": "..." # 当前激活的提供商 id
+  "mappings": [               # 模型位: 自定义模型名 -> 提供商 + 实际模型
+    {"id": "...", "alias": "modelview:main", "provider": "ds", "model": "deepseek-chat"}
+  ]
 }
+
+路由只认 mappings 里的 alias: 客户端固定填 alias(如 modelview:main),
+切换模型只需在 ModelView 里改映射,不必改任何客户端配置。
+alias 完全自定义,可自由增删改(预置的三个只是初始值)。
 """
 import json
 import os
@@ -24,7 +30,11 @@ DEFAULTS = {
     "port": 10901,
     "proxy_enabled": False,
     "providers": [],
+    "mappings": None,   # None = 从未写过(首次运行 / 老配置升级时预置默认位)
 }
+
+# 预置的三个空位: 只是初始值, 可自由改名 / 删除 / 新增
+DEFAULT_MAPPING_ALIASES = ("modelview:main", "modelview:play", "modelview:test")
 
 
 class Config:
@@ -38,16 +48,26 @@ class Config:
 
     # ---------- 加载 / 保存 ----------
     def _load(self):
+        fresh = False
         try:
             with open(self.path, "r", encoding="utf-8") as f:
                 raw = json.load(f)
             if isinstance(raw, dict):
                 self._data = {**DEFAULTS, **raw}
             self._data.pop("active_provider_id", None)  # 清理旧版本遗留字段
+            if self._data.get("mappings") is None:
+                fresh = True     # 老配置升级: 补上默认模型位
         except FileNotFoundError:
-            self.save()  # 首次运行:生成默认配置
+            fresh = True         # 首次运行:生成默认配置
         except (json.JSONDecodeError, OSError) as e:
             print(f"警告: 读取 config.json 失败,使用默认配置 ({e})")
+        if fresh:
+            self._data["mappings"] = [{"alias": a, "provider": "", "model": ""}
+                                      for a in DEFAULT_MAPPING_ALIASES]
+        # 统一结构(补齐 id / 去掉无效行),随后落盘
+        self._data["mappings"] = self._normalize_mappings(self._data.get("mappings"))
+        if fresh or not os.path.exists(self.path):
+            self.save()
 
     def save(self):
         """先写临时文件再原子替换,避免写一半损坏。"""
@@ -77,13 +97,50 @@ class Config:
         return None
 
     def get_provider_by_name(self, name):
-        """按名称(不区分大小写)查找提供商,用于 name:model 前缀路由。"""
+        """按名称(不区分大小写)查找提供商,用于模型位映射里的 provider 字段。"""
         low = (name or "").strip().lower()
         with self._lock:
             for p in self._data.get("providers") or []:
                 if (p.get("name") or "").strip().lower() == low:
                     return dict(p)
         return None
+
+    # ---------- 模型位 (mappings) ----------
+    @staticmethod
+    def _normalize_mappings(rows):
+        """清洗映射行: 去重空白、跳过无别名的行、保证每项都有 id。"""
+        out = []
+        for r in rows or []:
+            if not isinstance(r, dict):
+                continue
+            alias = str(r.get("alias") or "").strip()
+            if not alias:
+                continue     # 没有自定义名的行不成其为"位",直接丢弃
+            out.append({
+                "id": str(r.get("id") or uuid.uuid4().hex),
+                "alias": alias,
+                "provider": str(r.get("provider") or "").strip(),
+                "model": str(r.get("model") or "").strip(),
+            })
+        return out
+
+    def get_mappings(self):
+        with self._lock:
+            return [dict(m) for m in self._data.get("mappings") or []]
+
+    def get_mapping_by_alias(self, alias):
+        """按自定义模型名查找(不区分大小写);无匹配返回 None。"""
+        low = (alias or "").strip().lower()
+        with self._lock:
+            for m in self._data.get("mappings") or []:
+                if (m.get("alias") or "").strip().lower() == low:
+                    return dict(m)
+        return None
+
+    def set_mappings(self, rows):
+        """全量替换模型位(弹窗即全量编辑);行内带 id 的保留原 id。"""
+        with self._lock:
+            self._data["mappings"] = self._normalize_mappings(rows)
 
     # ---------- 写 ----------
     def add_provider(self, name, url, key):

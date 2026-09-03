@@ -21,12 +21,12 @@ from core.config import Config
 from core.proxy import ProxyServer
 from . import theme
 from .panels import LeftPanel, RightPanel, TopSwitch, LogDock
-from .dialogs import ProviderDialog
+from .dialogs import ProviderDialog, MappingDialog
 from .hotkey import GlobalHotkey
 
 # ---------------------------------------------------------------- 尺寸
 MARGIN = 14
-CAP_W, CAP_H = 250, 40
+CAP_W, CAP_H = 296, 40          # 顶中胶囊: 状态 + 「映射」入口
 LOG_W, LOG_H = 560, 190
 LEFT_W, RIGHT_W = 292, 330
 
@@ -46,6 +46,7 @@ class App(QObject):
         self._quitting = False
         self._dlg = None
         self._dlg_edit_pid = None
+        self._mdlg = None
 
         screen = QApplication.primaryScreen()
         self._geo = screen.availableGeometry()
@@ -78,6 +79,7 @@ class App(QObject):
         self.right.refresh_requested.connect(self._do_probe)
         self.right.copy_requested.connect(self._copy_model)
         self.top.toggle_requested.connect(self._toggle_proxy)
+        self.top.mapping_requested.connect(self._open_mapping)
 
         self.sig_log.connect(self.logdock.append)
         self.sig_probe.connect(self._on_probe_done)
@@ -114,7 +116,8 @@ class App(QObject):
         if cfg.is_proxy_enabled():
             QTimer.singleShot(300, self._toggle_proxy)   # 恢复上次转发状态
         self._anim_to_targets(show=True)
-        self._nlog("ModelView 已就绪 · Ctrl+Alt+M 显隐面板 · 点击顶部胶囊可启停代理")
+        self._nlog("ModelView 已就绪 · Ctrl+Alt+M 显隐面板 · 顶部胶囊开关代理, "
+                   "「映射」配置模型位")
 
     # ------------------------------------------------------------ 日志
     def _proxy_log_cb(self, msg):
@@ -250,7 +253,7 @@ class App(QObject):
             dlg.set_error("name 不能为空")
             return
         if ":" in name:
-            dlg.set_error("name 不能包含 \":\", 会破坏 name:model 路由前缀")
+            dlg.set_error("name 不能包含 \":\", 避免与模型位名称混淆")
             return
         low = name.lower()
         if url and not (url.startswith("http://") or url.startswith("https://")):
@@ -292,6 +295,55 @@ class App(QObject):
         QApplication.clipboard().setText(label)
         self._nlog(f"已复制模型名: {label}", "ok")
 
+    # ------------------------------------------------------------ 模型位映射
+    def _models_by_provider(self):
+        """已缓存的探测结果 → {提供商名: [模型 id, ...]},只取探测成功的。"""
+        items = self._proxy.models_cache.peek() or []
+        return {name: list(ids or []) for name, ids, err in items if not err}
+
+    def _open_mapping(self):
+        if self._mdlg is None:
+            self._mdlg = MappingDialog()
+            self._mdlg.saved.connect(self._on_mapping_saved)
+        mbp = self._models_by_provider()
+        self._mdlg.set_data(
+            self.cfg.get_mappings(),
+            [p.get("name") or "" for p in self.cfg.get_providers()],
+            mbp)
+        self._place_dialog(self._mdlg)
+        self._mdlg.show()
+        self._mdlg.raise_()
+        self._mdlg.activateWindow()
+        # 尚未探测过: 后台探一次, 结果回来自动回填各行的模型下拉
+        if not mbp and self.cfg.get_providers():
+            self._do_probe()
+
+    def _on_mapping_saved(self, rows):
+        dlg = self._mdlg
+        if dlg is None:
+            return
+        seen = set()
+        for r in rows:
+            alias = (r.get("alias") or "").strip()
+            if not alias:
+                dlg.set_error("每个模型位都要填「自定义模型名称」")
+                return
+            low = alias.lower()
+            if low in seen:
+                dlg.set_error(f"模型位名称重复: {alias}")
+                return
+            seen.add(low)
+        self.cfg.set_mappings(rows)
+        self.cfg.save()
+        dlg.hide()
+        bound = sum(1 for r in rows if r.get("provider") and r.get("model"))
+        empty = len([r for r in rows if (r.get("alias") or "").strip()]) - bound
+        msg = f"已保存 {bound + empty} 个模型位(其中 {bound} 个已绑定)"
+        if empty:
+            self._nlog(msg + f" · {empty} 个空位绑定后才能转发", "warn")
+        else:
+            self._nlog(msg, "ok")
+
     # ------------------------------------------------------------ 探测
     def _do_probe(self):
         if self._probing:
@@ -315,6 +367,8 @@ class App(QObject):
         self.right.set_probing(False)
         stamp = time.strftime("%H:%M:%S")
         self.right.set_results(items, stamp=f"{time.strftime('%m-%d %H:%M')} · 点探测可更新")
+        if self._mdlg is not None and self._mdlg.isVisible():
+            self._mdlg.refresh_models(self._models_by_provider())
         ok = sum(1 for _n, _ids, err in items if not err)
         fail = len(items) - ok
         total = sum(len(ids) for _n, ids, _err in items)

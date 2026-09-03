@@ -18,9 +18,9 @@ from PySide6.QtCore import QTimer  # noqa: E402
 PASS = []
 
 
-def check(name, cond):
+def check(name, cond, extra=""):
     PASS.append((name, bool(cond)))
-    print(("PASS " if cond else "FAIL ") + name)
+    print(("PASS " if cond else "FAIL ") + name + (f"  ({extra})" if extra else ""))
 
 
 def main():
@@ -121,8 +121,8 @@ def main():
     child0 = root0.child(0)
     QApplication.clipboard().setText("")
     a.right._on_item_clicked(child0, 0)
-    check("单击模型行复制进剪贴板",
-          QApplication.clipboard().text() == "ds:deepseek-v4-flash")
+    check("单击模型行复制进剪贴板(纯模型名, 无前缀)",
+          QApplication.clipboard().text() == "deepseek-v4-flash")
     init_exp = root0.isExpanded()
     a.right._on_item_clicked(root0, 0)
     check("单击根节点切换展开态", root0.isExpanded() != init_exp)
@@ -140,6 +140,49 @@ def main():
 
     a.right.remove_provider("ds")
     check("删除 ds 节点后剩 1", a.right._tree.topLevelItemCount() == 1)
+
+    # ---- 顶部「映射」入口 + 模型位弹窗 ----
+    check("顶部胶囊有映射入口", a.top._btn_map is not None
+          and a.top._btn_map.text() == "映射")
+    a._on_dialog_saved("ds", "https://api.deepseek.com/v1", "sk-test")
+    app.processEvents()
+    a._open_mapping()
+    app.processEvents()
+    d = a._mdlg
+    check("映射弹窗已打开", d is not None and not d.isHidden())
+    check("弹窗居中于屏幕",
+          abs(d.pos().x() + d.width() // 2 - a._geo.center().x()) <= 2
+          and abs(d.pos().y() + d.height() // 2 - a._geo.center().y()) <= 2)
+    check("预置 3 个空位", len(d.rows()) == 3, str([r["alias"] for r in d.rows()]))
+    check("预置位名 modelview:main", d.rows()[0]["alias"] == "modelview:main")
+    check("提供商下拉含已配置的 ds", d._rows[0]._prov.count() >= 2)
+
+    r0 = d._rows[0]
+    r0._alias.setText("my-main")
+    r0.set_provider("ds")
+    r0.set_model("deepseek-v4-flash")     # 未探测时手填
+    check("未探测也可手填模型名", r0.model_text() == "deepseek-v4-flash")
+    d.refresh_models({"ds": ["deepseek-v4-flash", "deepseek-v4-pro"]})
+    check("探测后回填下拉且保留已选",
+          r0._model.count() == 3 and r0.model_text() == "deepseek-v4-flash")
+
+    d._add_row()                            # 空名行 → 保存被拦截
+    a._on_mapping_saved(d.rows())
+    check("空别名被拦截", "自定义模型名称" in d._error.text() and not d.isHidden())
+    d._remove_row(d._rows[-1])
+    d._add_row("x", "my-main", "", "")      # 重名 → 拦截
+    a._on_mapping_saved(d.rows())
+    check("重名被拦截", "重复" in d._error.text())
+    d._remove_row(d._rows[-1])
+    d.set_error("")
+    a._on_mapping_saved(d.rows())
+    check("保存 3 个位", len(cfg.get_mappings()) == 3)
+    check("保存后弹窗关闭", d.isHidden())
+    check("位已落盘", "my-main" in open(tmp, encoding="utf-8").read())
+    m = cfg.get_mapping_by_alias("my-main")
+    check("位指向 ds / deepseek-v4-flash",
+          m is not None and m["provider"] == "ds"
+          and m["model"] == "deepseek-v4-flash", str(m))
 
     # 代理真实启停(临时端口)
     ok, msg = a._proxy.start(0)

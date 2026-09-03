@@ -310,7 +310,7 @@ class RightPanel(FloatingWindow):
 
     - 标题带计数: 模型(x个), x = 当前树内模型行总数(成功根节点子行)
     - 根节点(提供商): 单击展开 / 收起
-    - 模型子行: 单击即复制 name:model(不必右键), 复制后走 copy_requested
+    - 模型子行: 单击即复制模型名(纯 id, 不含提供商前缀 —— 前缀路由已废弃)
     标题行只留 标题 + 探测 按钮, 无状态 pill(保持干净)。
     """
 
@@ -399,11 +399,11 @@ class RightPanel(FloatingWindow):
                 root = self._make_root(f"{name} · {len(models)} 个模型",
                                        theme.TEXT, name)
                 for mid in models:
-                    label = f"{name}:{mid}"
-                    child = QTreeWidgetItem([_elide(label, self._text_px, self._tree.font())])
+                    child = QTreeWidgetItem([_elide(mid, self._text_px, self._tree.font())])
                     child.setForeground(0, QColor(theme.TEXT_DIM))
-                    child.setToolTip(0, label)
-                    child.setData(0, USER_ROLE, label.lower())
+                    child.setToolTip(0, mid)
+                    # 筛选用完整 "提供商:模型", 便于用 "ds:" 之类的前缀过滤
+                    child.setData(0, USER_ROLE, f"{name}:{mid}".lower())
                     root.addChild(child)
             self._tree.addTopLevelItem(root)
             root.setExpanded(False)
@@ -444,11 +444,9 @@ class RightPanel(FloatingWindow):
             # 根节点: 单击展开 / 收起
             item.setExpanded(not item.isExpanded())
             return
-        # 模型子行: 单击即复制
-        full = item.toolTip(0)
-        if not full:
-            full = item.text(0)
-        if full and ":" in full:
+        # 模型子行: 单击即复制(复制纯模型名, 供映射弹窗的「模型」栏粘贴)
+        full = item.toolTip(0) or item.text(0)
+        if full:
             self.copy_requested.emit(full)
 
     def remove_provider(self, name):
@@ -464,9 +462,13 @@ class RightPanel(FloatingWindow):
 # ---------------------------------------------------------------- 顶中: 代理开关
 
 class TopSwitch(FloatingWindow):
-    """顶部中央胶囊: 显示代理状态(不含提供商计数), 点击启停。"""
+    """顶部中央胶囊: 左半点击启停代理, 右侧「映射」按钮打开模型位配置。
+
+    映射本质就是路由表, 因此入口直接做在路由开关上, 不再另开面板。
+    """
 
     toggle_requested = Signal()
+    mapping_requested = Signal()
 
     def __init__(self, w, h):
         super().__init__(w, h)
@@ -478,7 +480,7 @@ class TopSwitch(FloatingWindow):
             f"ClickableFrame {{ background: {theme.BG_CARD}; border: 1px solid {theme.BORDER_STRONG};"
             f" border-radius: 16px; }}"
             f"ClickableFrame:hover {{ background: {theme.BG_CARD_HOVER}; }}")
-        row = _hbox((18, 0, 18, 0), spacing=10, parent=inner)
+        row = _hbox((18, 0, 10, 0), spacing=10, parent=inner)
         self._dot = dot_label(theme.GRAY_DOT, 10)
         row.addWidget(self._dot)
         self._label = QLabel("代理未运行")
@@ -487,6 +489,17 @@ class TopSwitch(FloatingWindow):
             f"font-size: {theme.FS_BASE}px; font-weight: 600;")
         row.addWidget(self._label)
         row.addStretch(1)
+
+        sep = QFrame(inner)
+        sep.setFrameShape(QFrame.Shape.VLine)
+        sep.setFixedWidth(1)
+        sep.setStyleSheet(f"color: {theme.BORDER_STRONG}; background: {theme.BORDER_STRONG};"
+                          f"border: none;")
+        row.addWidget(sep)
+
+        self._btn_map = ghost_button("映射", "配置模型位: 自定义模型名 → 提供商 + 模型")
+        self._btn_map.clicked.connect(self.mapping_requested)
+        row.addWidget(self._btn_map)
 
         lay = self.body()
         lay.setContentsMargins(6, 6, 6, 6)

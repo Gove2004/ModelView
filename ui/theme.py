@@ -125,6 +125,18 @@ QPushButton#cardDanger:hover {{
     background: {RED_DIM};
     color: #ffffff;
 }}
+/* 映射弹窗: 行内删除钮 */
+QPushButton#rowDel {{
+    background: transparent;
+    border: none;
+    color: {TEXT_FAINT};
+    font-size: 15px;
+    border-radius: 5px;
+}}
+QPushButton#rowDel:hover {{
+    background: {RED_DIM};
+    color: #ffffff;
+}}
 /* 输入框 */
 QLineEdit {{
     background: {BG_SUNKEN};
@@ -158,6 +170,48 @@ QCheckBox::indicator:hover {{
 QCheckBox::indicator:checked {{
     background: {GREEN_DIM};
     border-color: {GREEN_DIM};
+}}
+/* 下拉框(提供商 / 模型选择) */
+QComboBox {{
+    background: {BG_SUNKEN};
+    border: 1px solid {BORDER};
+    border-radius: 7px;
+    padding: 5px 8px;
+    color: {TEXT};
+    font-size: {FS_BASE}px;
+}}
+QComboBox:hover {{
+    border-color: {BORDER_STRONG};
+}}
+QComboBox:focus {{
+    border-color: {BLUE};
+}}
+QComboBox::drop-down {{
+    subcontrol-origin: padding;
+    subcontrol-position: right center;
+    width: 18px;
+    border: none;
+}}
+QComboBox::down-arrow {{
+    width: 0; height: 0;
+    border-left: 4px solid transparent;
+    border-right: 4px solid transparent;
+    border-top: 5px solid {TEXT_DIM};
+    margin-right: 4px;
+}}
+QComboBox QAbstractItemView {{
+    background: {BG_CARD};
+    border: 1px solid {BORDER_STRONG};
+    border-radius: 7px;
+    padding: 4px;
+    color: {TEXT};
+    selection-background-color: #33507a;
+    selection-color: {TEXT};
+    outline: none;
+}}
+QComboBox QAbstractItemView::item {{
+    min-height: 24px;
+    padding: 3px 8px;
 }}
 /* 模型树 */
 QTreeWidget {{

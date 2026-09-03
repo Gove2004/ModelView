@@ -1,5 +1,11 @@
 # -*- coding: utf-8 -*-
-"""多提供商模型聚合缓存: /models 汇总所有已配置提供商的模型,返回 name:model 格式。"""
+"""多提供商模型探测缓存。
+
+探测结果 [(name, model_ids, error_or_None), ...] 有两个用途:
+  - UI 右翼模型树展示
+  - 映射弹窗里「模型」下拉的选项来源
+代理的 /models 接口不再依赖它(现在只返回模型位)。
+"""
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -49,3 +55,13 @@ class ModelsCache:
     def invalidate(self):
         with self._lock:
             self._items = None
+
+    def peek(self):
+        """返回上一次探测结果(不触发探测);从未探测过返回 None。
+
+        供 UI 读取已缓存的模型列表(如映射弹窗的下拉选项)。
+        """
+        with self._lock:
+            if self._items is None:
+                return None
+            return [(name, list(ids), err) for name, ids, err in self._items]

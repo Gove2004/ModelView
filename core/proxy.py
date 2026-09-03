@@ -1,10 +1,14 @@
 # -*- coding: utf-8 -*-
 """本地 OpenAI 兼容转发服务(默认端口 10901)。
 
-把 OpenAI 兼容格式的请求转发到当前激活的提供商,并将响应路由返回:
+把 OpenAI 兼容格式的请求按「模型位」转发到对应提供商,并将响应路由返回:
+  - 路由依据: config.mappings 里的 alias(自定义模型名),形如 modelview:main
   - 普通 JSON 响应: 整段读回,原样透传(保留 Content-Length)
   - SSE 流式响应 (stream=true): 用 chunked 逐块透传,实现边生成边输出
   - 上游错误(4xx/5xx、连接失败): 透传状态码,或返回 OpenAI 风格的 error JSON
+
+客户端只需固定填 alias,换模型在 ModelView 里改映射即可,不必动客户端配置。
+name:model 形式的直连前缀路由已移除。
 """
 import json
 import threading
@@ -49,19 +53,48 @@ def build_target_url(base_url, path):
     return base + "/" + p
 
 
-def resolve_provider(config, model):
-    """按模型名决定路由目标: 仅支持 name:model 前缀路由。
+def resolve_route(config, model):
+    """按自定义模型位(mappings.alias)决定路由目标。
 
-    - model 形如 name:xxx 且 name 与某个已配置提供商匹配: 路由到该提供商,
-      返回的第二个值为去掉前缀后的模型名。
-    - 其余情况(无前缀、前缀未知): 返回 (None, model),表示无法确定路由。
+    返回 (provider_or_None, real_model_or_None, error_or_None)。
+    三种失败情形都会给出可直接读给用户的中文提示:
+      1. model 缺失 —— 客户端没带模型名
+      2. alias 不存在 —— 请求的模型名不在自定义映射中
+      3. 位已存在但 provider / model 为空,或 provider 已被删除 —— 未配置映射模型
     """
-    if isinstance(model, str) and ":" in model:
-        prefix, _, rest = model.partition(":")
-        p = config.get_provider_by_name(prefix)
-        if p is not None:
-            return p, rest
-    return None, model
+    if not isinstance(model, str) or not model.strip():
+        available = _alias_list(config)
+        return None, None, ("请求未提供 model 字段,请在客户端填写 ModelView 中已配置的"
+                            f"模型位名称(当前可用: {available})。")
+
+    m = config.get_mapping_by_alias(model)
+    if m is None:
+        return None, None, (f"模型 \"{model}\" 未匹配到任何模型位。"
+                            f"请在 ModelView 顶部「映射」中配置它,当前可用: {_alias_list(config)}")
+
+    alias = m.get("alias")
+    provider_name = (m.get("provider") or "").strip()
+    real = (m.get("model") or "").strip()
+    if not provider_name or not real:
+        return None, None, (f"模型位 \"{alias}\" 尚未绑定提供商和模型,请求无法转发。"
+                            "请在 ModelView 顶部「映射」中补全。")
+
+    provider = config.get_provider_by_name(provider_name)
+    if provider is None:
+        return None, None, (f"模型位 \"{alias}\" 指向的提供商 \"{provider_name}\" 已不存在,"
+                            "请在 ModelView 顶部「映射」中重新绑定。")
+    return provider, real, None
+
+
+def _alias_list(config, limit=8):
+    """把当前可用别名拼成 '(a, b, c)' 形式的提示串。"""
+    names = [m.get("alias") for m in config.get_mappings() if m.get("alias")]
+    if not names:
+        return "(尚未配置任何模型位)"
+    shown = ", ".join(names[:limit])
+    if len(names) > limit:
+        shown += f" 等 {len(names)} 个"
+    return shown
 
 
 def _make_handler(proxy):
@@ -97,7 +130,7 @@ def _make_handler(proxy):
         # ---------- 核心转发 ----------
         def _forward(self):
             started = time.time()
-            # /models 聚合: 返回所有已配置提供商的模型 (name:model)
+            # /models: 只列出「模型位」(已完整配置的 alias)
             if self.command == "GET" and self._is_models_path(self.path):
                 self._serve_models(started)
                 return
@@ -115,20 +148,15 @@ def _make_handler(proxy):
                 if isinstance(req_data, dict):
                     model = req_data.get("model")
 
-            provider, rewritten = resolve_provider(proxy.config, model)
-            if provider is None:
-                if model:
-                    msg = (f"无法确定路由: 模型 \"{model}\" 未指定提供商前缀。"
-                           "请使用 name:model 格式指定提供商(如 ds:deepseek-chat)。")
-                else:
-                    msg = "请求未包含可路由的模型名,请使用 name:model 格式指定提供商。"
-                self._json_error(400, msg)
+            provider, real_model, route_err = resolve_route(proxy.config, model)
+            if route_err is not None:
+                self._json_error(400, route_err)
                 self._log_request(self.command, self.path, "-", 400, started)
                 return
 
-            # 去掉 name: 前缀后重写请求体中的 model 字段
-            if isinstance(req_data, dict) and rewritten is not None and rewritten != model:
-                req_data["model"] = rewritten
+            # 把请求体里的别名换成该提供商的真实模型名
+            if isinstance(req_data, dict) and real_model != model:
+                req_data["model"] = real_model
                 body = json.dumps(req_data, ensure_ascii=False).encode("utf-8")
 
             target = build_target_url(provider.get("url") or "", self.path)
@@ -185,12 +213,21 @@ def _make_handler(proxy):
             return p in ("/models", "/v1/models")
 
         def _serve_models(self, started):
-            """返回所有提供商模型的聚合结果,格式 name:model。"""
-            items = proxy.models_cache.get_all()
+            """返回已配置的模型位列表。
+
+            只列出「别名 + 提供商 + 模型」三者齐全、且提供商仍存在的位;
+            空位/悬空位不暴露给客户端,避免客户端选了必然报错的项。
+            """
             data = []
-            for name, ids, err in items:
-                for mid in ids:
-                    data.append({"id": f"{name}:{mid}", "object": "model", "owned_by": name})
+            for m in proxy.config.get_mappings():
+                alias = (m.get("alias") or "").strip()
+                pname = (m.get("provider") or "").strip()
+                real = (m.get("model") or "").strip()
+                if not alias or not pname or not real:
+                    continue
+                if proxy.config.get_provider_by_name(pname) is None:
+                    continue
+                data.append({"id": alias, "object": "model", "owned_by": pname})
             body = json.dumps({"object": "list", "data": data}, ensure_ascii=False).encode("utf-8")
             self.send_response(200)
             self.send_header("Content-Type", "application/json; charset=utf-8")
@@ -199,7 +236,7 @@ def _make_handler(proxy):
             self.end_headers()
             self.wfile.write(body)
             self.wfile.flush()
-            self._log_request("GET", self.path, "AGGREGATED /models", 200, started)
+            self._log_request("GET", self.path, f"MAPPINGS /models ({len(data)})", 200, started)
 
         # ---------- 响应写回 ----------
         def _stream_response(self, status, headers, upstream):
