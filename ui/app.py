@@ -21,7 +21,7 @@ from core.config import Config
 from core.proxy import ProxyServer
 from . import theme
 from .panels import LeftPanel, RightPanel, TopSwitch, LogDock
-from .dialogs import ProviderDialog, MappingDialog, SCALE_FROM
+from .dialogs import ProviderDialog, MappingDialog, ConfirmDialog, SCALE_FROM
 from .hotkey import GlobalHotkey
 
 # ---------------------------------------------------------------- 尺寸
@@ -47,6 +47,7 @@ class App(QObject):
         self._dlg = None
         self._dlg_edit_pid = None
         self._mdlg = None
+        self._cdlg = None
         self._dlg_follow = []       # 面板显隐时跟随渐隐渐显的中心弹窗
 
         screen = QApplication.primaryScreen()
@@ -237,9 +238,9 @@ class App(QObject):
             wid.hide()
 
     def _visible_centers(self):
-        """当前可见的中心弹窗(提供商编辑/映射), 供面板隐藏时联动。"""
+        """当前可见的中心弹窗(提供商编辑/映射/删除确认), 供面板隐藏时联动。"""
         out = []
-        for d in (self._dlg, self._mdlg):
+        for d in (self._dlg, self._mdlg, self._cdlg):
             if d is not None and d.isVisible():
                 out.append(d)
         return out
@@ -337,6 +338,28 @@ class App(QObject):
         self._refresh_providers()
 
     def _delete_provider(self, pid):
+        """卡片点「删除」: 先弹确认窗, 确认后才真正删。"""
+        p = self.cfg.get_provider(pid)
+        if p is None:
+            return
+        name = p.get("name") or "?"
+        c = self._confirm_dlg()
+        c.ask(
+            f"删除提供商「{name}」?",
+            "该提供商及其保存的 key 将被移除, 引用它的模型位会显示为「缺失」, "
+            "需重新绑定。此操作不可撤销。",
+            lambda: self._do_delete_provider(pid))
+        self._place_dialog(c)
+        c.show()
+        c.raise_()
+        c.activateWindow()
+
+    def _confirm_dlg(self):
+        if self._cdlg is None:
+            self._cdlg = ConfirmDialog()
+        return self._cdlg
+
+    def _do_delete_provider(self, pid):
         p = self.cfg.get_provider(pid)
         if p is None:
             return

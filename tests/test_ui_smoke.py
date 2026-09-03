@@ -45,6 +45,10 @@ def main():
     check("顶开关为 映射|端口|复制 三段", not hasattr(a.top, "_label")
           and a.top._btn_map.text() == "映射" and a.top._btn_copy.text() == "复制"
           and a.top._btn_port.text() == "10901")
+    bw = (a.top._btn_map.width(), a.top._btn_port.width(), a.top._btn_copy.width())
+    check("胶囊三段等宽均分", max(bw) - min(bw) <= 1, str(bw))
+    pxc = a.top._btn_port.mapTo(a.top, a.top._btn_port.rect().center()).x()
+    check("中段端口钮位于胶囊正中", abs(pxc - a.top.width() // 2) <= 2, f"port_center_x={pxc}")
 
     # 日志分级渲染
     for lvl in ("ok", "err", "warn", "req", "info"):
@@ -89,9 +93,10 @@ def main():
 
     # 卡片操作按钮点击链路(clicked 携带 checked 参数, 不得顶替 pid)
     btns = {b.text(): b for b in card.findChildren(QPushButton)}
-    btns["编辑"].click()
+    check("卡片行尾按钮为 修改/删除", "修改" in btns and "删除" in btns)
+    btns["修改"].click()
     app.processEvents()
-    check("点[编辑]打开弹层且预填", a._dlg is not None
+    check("点[修改]打开弹层且预填", a._dlg is not None
           and a._dlg._name.text() == "ds" and not a._dlg.isHidden())
     a._dlg.hide()
     check("卡片无[复制URL]按钮", "复制 URL" not in btns)
@@ -222,14 +227,24 @@ def main():
     # 托盘在 offscreen 下不可用但不崩溃
     check("托盘对象存在", a.tray is not None)
 
-    # 删除流程(走卡片[删除]按钮, 覆盖整条信号链)
+    # 删除流程(走卡片[删除] → 确认窗 → 确认, 覆盖整条信号链)
     card = list(a.left._cards.values())[0]
     for b in card.findChildren(QPushButton):
         if b.text() == "删除":
             b.click()
             break
     app.processEvents()
-    check("点[删除]后 0 家", len(cfg.get_providers()) == 0)
+    c = a._cdlg
+    check("点[删除]先弹确认窗(红主钮)", c is not None and not c.isHidden()
+          and c._ok.text() == "删除" and c._ok.objectName() == "danger")
+    check("确认窗居中且同款尺寸", c.width() == 380 and c.height() >= 160
+          and abs(c.pos().x() + c.width() // 2 - a._geo.center().x()) <= 2
+          and abs(c.pos().y() + c.height() // 2 - a._geo.center().y()) <= 2)
+    check("确认窗标题含提供商名", "ds" in c._title.text())
+    check("确认前提供商仍在(1 家)", len(cfg.get_providers()) == 1)
+    c._ok.click()
+    app.processEvents()
+    check("确认后 0 家且弹窗关闭", len(cfg.get_providers()) == 0 and c.isHidden())
     app.processEvents()
 
     # 清理

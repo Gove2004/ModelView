@@ -14,7 +14,7 @@
     connect 到 lambda 时必须显式吞掉该参数, 否则形参被顶替(见 ProviderCard)。
 """
 import time
-from PySide6.QtCore import Qt, Signal, QSize, QPropertyAnimation, QRectF, QPoint
+from PySide6.QtCore import Qt, Signal, QSize, QPropertyAnimation, QRectF, QPoint, QRect, QEasingCurve
 from PySide6.QtGui import (QFontMetrics, QColor, QPainterPath, QRegion, QIcon,
                            QPixmap, QPainter, QFont, QPolygon)
 from PySide6.QtWidgets import (
@@ -141,7 +141,10 @@ class FloatingWindow(QWidget):
 # ---------------------------------------------------------------- 左翼: 提供商列表
 
 class ProviderCard(QFrame):
-    """提供商卡片: name/url + 底部直显 编辑/删除 操作条。
+    """提供商卡片: 两行文本, 行尾直显操作按钮。
+
+      name ……                         修改
+      url(elide) ……                   删除(点击弹确认窗)
 
     注意: QPushButton.clicked 自带一个 checked 参数, connect 到带形参的
     lambda 时会被顶替 —— 这里统一在 _act_btn 内部用外层 lambda 吞掉它。
@@ -151,36 +154,45 @@ class ProviderCard(QFrame):
         super().__init__()
         self._p = provider
         self._on_edit = on_edit
-        self.setFixedHeight(72)
+        self.setFixedHeight(62)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         self.setStyleSheet(
             f"ProviderCard {{ background: {theme.BG_CARD}; border-radius: 8px; border: 1px solid transparent; }}"
             f"ProviderCard:hover {{ background: {theme.BG_CARD_HOVER}; border: 1px solid {theme.BORDER}; }}")
 
-        lay = _vbox((12, 8, 12, 7), spacing=2, parent=self)
-        name = QLabel(provider.get("name") or "?")
-        name.setStyleSheet(
+        lay = _vbox((10, 6, 10, 6), spacing=3, parent=self)
+
+        # 行1: name … 修改
+        r1 = _hbox((0, 0, 0, 0), spacing=6)
+        nm_text = provider.get("name") or "?"
+        nm = QLabel()
+        fm = QFontMetrics(nm.font())
+        nm.setText(fm.elidedText(nm_text, Qt.TextElideMode.ElideRight,
+                                 max(50, width - 120)))
+        if len(nm_text) > 12:
+            nm.setToolTip(nm_text)
+        nm.setStyleSheet(
             f"color: {theme.TEXT}; font-size: {theme.FS_CARD_NAME}px; font-weight: 600;"
             f"background: transparent; border: none;")
-        lay.addWidget(name)
+        r1.addWidget(nm, 1)
+        r1.addWidget(self._act_btn("修改", on_edit, "cardAct", "修改提供商"))
+        lay.addLayout(r1)
 
+        # 行2: url(elide) … 删除
+        r2 = _hbox((0, 0, 0, 0), spacing=6)
+        full = provider.get("url") or ""
         url = QLabel()
         fm = QFontMetrics(url.font())
-        full = provider.get("url") or ""
         url.setText(fm.elidedText(full or "(无 url)", Qt.TextElideMode.ElideMiddle,
-                                  max(40, width - 66)))
+                                  max(40, width - 120)))
         if full:
             url.setToolTip(full)
         url.setStyleSheet(
             f"color: {theme.TEXT_FAINT}; font-size: {theme.FS_META}px;"
             f"background: transparent; border: none;")
-        lay.addWidget(url)
-
-        row = _hbox((0, 0, 0, 0), spacing=4)
-        row.addStretch(1)
-        row.addWidget(self._act_btn("编辑", on_edit, "cardAct", "编辑提供商"))
-        row.addWidget(self._act_btn("删除", on_delete, "cardDanger", "删除提供商"))
-        lay.addLayout(row)
+        r2.addWidget(url, 1)
+        r2.addWidget(self._act_btn("删除", on_delete, "cardDanger", "删除提供商(需确认)"))
+        lay.addLayout(r2)
 
     @staticmethod
     def _act_btn(text, slot, obj_name, tip):
@@ -480,28 +492,26 @@ class TopSwitch(FloatingWindow):
         inner.setStyleSheet(
             f"QFrame {{ background: {theme.BG_CARD}; border: 1px solid {theme.BORDER_STRONG};"
             f" border-radius: 14px; }}")
-        row = _hbox((10, 0, 10, 0), spacing=4, parent=inner)
+        # 三段均分整条胶囊: 每个按钮 stretch=1, 文字各自水平居中
+        row = _hbox((8, 0, 8, 0), spacing=0, parent=inner)
 
         self._btn_map = ghost_button("映射", "打开自定义映射窗口")
         self._btn_map.clicked.connect(self.mapping_requested)
-        row.addWidget(self._btn_map)
+        row.addWidget(self._btn_map, 1)
 
         row.addWidget(self._vsep(inner))
 
         self._port = 10901
         self._btn_port = ghost_button("10901", "点击启动本地转发代理")
         self._btn_port.clicked.connect(self.toggle_requested)
-        row.addWidget(self._btn_port)
+        row.addWidget(self._btn_port, 1)
 
         row.addWidget(self._vsep(inner))
 
         self._btn_copy = ghost_button("复制", "复制代理地址到剪贴板")
         self._btn_copy.clicked.connect(
             lambda _checked=False, s=self: s.copy_requested.emit(str(s._port)))
-        row.addWidget(self._btn_copy)
-
-        row.insertStretch(0, 1)
-        row.addStretch(1)
+        row.addWidget(self._btn_copy, 1)
 
         lay = self.body()
         lay.setContentsMargins(6, 6, 6, 6)
@@ -594,7 +604,7 @@ class LogDock(FloatingWindow):
         self._expanded = False
         self._expand_anim = None
 
-        self._btn_toggle = ghost_button("展开 ▴", "展开 / 折叠日志面板")
+        self._btn_toggle = ghost_button("展开", "展开 / 折叠日志面板")
         self._btn_toggle.clicked.connect(self._on_toggle)
         btn = ghost_button("清空", "清空日志")
         btn.clicked.connect(self.clear)
@@ -660,7 +670,7 @@ class LogDock(FloatingWindow):
         self._sync_toggle_text()
 
     def _sync_toggle_text(self):
-        self._btn_toggle.setText("收起 ▾" if self._expanded else "展开 ▴")
+        self._btn_toggle.setText("收起" if self._expanded else "展开")
         self._btn_toggle.setToolTip("折叠日志面板" if self._expanded else "展开日志面板")
 
     def _remask(self, h):

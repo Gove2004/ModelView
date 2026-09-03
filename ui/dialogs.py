@@ -65,6 +65,135 @@ class CenterMixin:
     centerScale = Property(float, _scale_get, _scale_set)
 
 
+# ---------------------------------------------------------------- 公共外壳
+
+def _shell(dlg, title, w):
+    """中央弹窗统一外壳: 无边框圆角面板 + 标题 + 错误行。
+
+    返回 (lay, error_label): lay 是内容容器, 调用方继续塞字段/行/按钮。
+    所有中央弹窗(提供商/映射/确认)都走这里, 保证视觉格式一致。
+    """
+    outer = QVBoxLayout(dlg)
+    outer.setContentsMargins(0, 0, 0, 0)
+    panel = QFrame(dlg)
+    panel.setObjectName("panel")
+    outer.addWidget(panel)
+    lay = QVBoxLayout(panel)
+    lay.setContentsMargins(20, 16, 20, 16)
+    lay.setSpacing(10)
+
+    t = QLabel(title)
+    t.setStyleSheet(
+        f"color: {theme.TEXT}; font-size: {theme.FS_DIALOG_TITLE}px; font-weight: 600;"
+        f"background: transparent; border: none;")
+    lay.addWidget(t)
+
+    err = QLabel("")
+    err.setWordWrap(True)
+    err.setStyleSheet(
+        f"color: {theme.RED}; font-size: {theme.FS_ERROR}px;"
+        f"background: transparent; border: none;")
+    err.hide()
+    lay.addWidget(err)
+    return lay, t, err
+
+
+def _btn(text, obj=None, default=False):
+    b = QPushButton(text)
+    if obj:
+        b.setObjectName(obj)
+    b.setCursor(Qt.CursorShape.PointingHandCursor)
+    if default:
+        b.setDefault(True)
+    return b
+
+
+def _footer(lay, left=None, cancel_text="取消", ok_text="保存", ok_obj="accent",
+            on_cancel=None, on_ok=None):
+    """统一底部按钮行: 左侧可选(新增), 右侧 取消/主按钮。"""
+    row = QHBoxLayout()
+    row.setSpacing(8)
+    if left is not None:
+        left.setObjectName("ghost")
+        left.setFlat(True)
+        left.setCursor(Qt.CursorShape.PointingHandCursor)
+        row.addWidget(left)
+        row.addStretch(1)
+    else:
+        row.addStretch(1)
+    cancel = _btn(cancel_text)
+    ok = _btn(ok_text, ok_obj, default=True)
+    row.addWidget(cancel)
+    row.addWidget(ok)
+    lay.addLayout(row)
+
+    def wire(b, slot):
+        if slot is not None:
+            b.clicked.connect(lambda _c=False, s=slot: s())
+    wire(cancel, on_cancel)     # 取消键语义由调用方决定(通常传 self.reject)
+    wire(ok, on_ok)
+    return cancel, ok
+
+
+def _finalize_size(dlg, min_h=120):
+    """中央弹窗内容定稿后的收尾: 宽固定 W, 高按面板内容自然高取(留 8px 余量)。
+
+    构造时已把高度先置 0 只固定宽度, 这里的 sizeHint 才不会被固定高度
+    约束污染; 随后把最终尺寸记录进 CenterMixin 的自然尺寸锚点, 供
+    center_on / 缩放动画使用。
+    """
+    panel = dlg.findChild(QFrame, "panel")
+    base = panel.sizeHint().height() if panel is not None else dlg.sizeHint().height()
+    h = max(int(base) + 8, min_h)
+    dlg.setFixedHeight(h)
+    dlg._init_center(W, h)
+
+
+class ConfirmDialog(QDialog, CenterMixin):
+    """删除等确认弹窗(与提供商/映射弹窗同款外壳, 屏幕正中心)。
+
+    单个实例可反复复用: 每次 ask() 设置标题/正文/回调并重算高度。
+    """
+
+    def __init__(self, parent=None):
+        flags = (Qt.WindowType.FramelessWindowHint | Qt.WindowType.WindowStaysOnTopHint
+                 | Qt.WindowType.Tool)
+        super().__init__(None, flags)
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+        self.setModal(False)
+        self.setFixedSize(W, 0)      # 先只固定宽, 高度收尾时按内容算
+
+        lay, t, _err = _shell(self, "请确认", W)
+        t.hide()                     # 标题由 ask() 每次设置(可复用同一实例)
+        self._title = t
+        self._body = QLabel("")
+        self._body.setWordWrap(True)
+        self._body.setStyleSheet(
+            f"color: {theme.TEXT_DIM}; font-size: {theme.FS_BASE}px;"
+            f"background: transparent; border: none;")
+        lay.addWidget(self._body)
+
+        _cancel, ok = _footer(lay, cancel_text="取消", ok_text="删除",
+                              ok_obj="danger", on_cancel=self.reject,
+                              on_ok=self._confirm)
+        self._ok = ok
+        self._on_confirm = None
+        _finalize_size(self, min_h=160)
+
+    def ask(self, title, body, on_confirm):
+        """设置标题/正文/确认回调;每次调用按新正文重算高度。"""
+        self._title.setText(title)
+        self._title.show()
+        self._body.setText(body)
+        self._on_confirm = on_confirm
+        _finalize_size(self, min_h=160)
+
+    def _confirm(self):
+        if self._on_confirm is not None:
+            self._on_confirm()
+        self.hide()
+
+
 class ProviderDialog(QDialog, CenterMixin):
     saved = Signal(str, str, str)   # name, url, key
 
@@ -76,20 +205,7 @@ class ProviderDialog(QDialog, CenterMixin):
         self.setModal(False)
         self.setFixedSize(W, 0)
 
-        outer = QVBoxLayout(self)
-        outer.setContentsMargins(0, 0, 0, 0)
-        panel = QFrame(self)
-        panel.setObjectName("panel")
-        outer.addWidget(panel)
-        lay = QVBoxLayout(panel)
-        lay.setContentsMargins(20, 16, 20, 16)
-        lay.setSpacing(10)
-
-        self._title = QLabel("新增提供商")
-        self._title.setStyleSheet(
-            f"color: {theme.TEXT}; font-size: {theme.FS_DIALOG_TITLE}px; font-weight: 600;"
-            f"background: transparent; border: none;")
-        lay.addWidget(self._title)
+        lay, self._title, self._error = _shell(self, "新增提供商", W)
 
         self._name = self._field(lay, "name")
         self._url = self._field(lay, "url")
@@ -103,33 +219,11 @@ class ProviderDialog(QDialog, CenterMixin):
                 QLineEdit.EchoMode.Normal if on else QLineEdit.EchoMode.Password))
         lay.addWidget(show)
 
-        self._error = QLabel("")
-        self._error.setWordWrap(True)
-        self._error.setStyleSheet(
-            f"color: {theme.RED}; font-size: {theme.FS_ERROR}px;"
-            f"background: transparent; border: none;")
-        self._error.hide()
-        lay.addWidget(self._error)
+        cancel, ok = _footer(lay, cancel_text="取消", ok_text="保存",
+                             on_cancel=self.reject, on_ok=self._try_save)
 
-        row = QHBoxLayout()
-        row.addStretch(1)
-        cancel = QPushButton("取消")
-        cancel.setCursor(Qt.CursorShape.PointingHandCursor)
-        cancel.clicked.connect(self.reject)
-        ok = QPushButton("保存")
-        ok.setObjectName("accent")
-        ok.setCursor(Qt.CursorShape.PointingHandCursor)
-        ok.setDefault(True)
-        ok.clicked.connect(self._try_save)
-        row.addWidget(cancel)
-        row.addWidget(ok)
-        lay.addLayout(row)
-
-        # 动态高度: 内容确定后按需调整(固定宽, 高度由布局算)
-        self.adjustSize()
-        nat_h = panel.sizeHint().height() + 8
-        self.setFixedHeight(nat_h)
-        self._init_center(W, nat_h)
+        # 尺寸收尾: 宽固定 W, 高按内容自然算
+        _finalize_size(self)
 
     @staticmethod
     def _field(lay, label_text):
@@ -179,7 +273,7 @@ class MappingRow(QFrame):
 
     remove_requested = Signal(object)      # 传出自身, 便于直接移除
 
-    W_ALIAS, W_PROV, W_MODEL, W_DEL = 150, 108, 172, 26
+    W_ALIAS, W_PROV, W_MODEL, W_DEL = 150, 108, 160, 46
     NO_SEL = "未选择"
     NO_PROV = "未绑定"
 
@@ -213,9 +307,9 @@ class MappingRow(QFrame):
         self._model.setFixedWidth(self.W_MODEL)
         lay.addWidget(self._model)
 
-        self._del = QPushButton("×")
+        self._del = QPushButton("删除")
         self._del.setObjectName("rowDel")
-        self._del.setFixedSize(self.W_DEL, 26)
+        self._del.setFixedWidth(self.W_DEL)
         self._del.setCursor(Qt.CursorShape.PointingHandCursor)
         self._del.setToolTip("删除该映射")
         # clicked(checked) 会顶替 lambda 形参 → 外层吞掉
@@ -319,8 +413,7 @@ class MappingDialog(QDialog, CenterMixin):
                         ("删除", MappingRow.W_DEL)):
             lab = QLabel(text)
             lab.setFixedWidth(w)
-            lab.setAlignment(Qt.AlignmentFlag.AlignCenter if w <= 40
-                             else Qt.AlignmentFlag.AlignLeft)
+            lab.setAlignment(Qt.AlignmentFlag.AlignCenter)
             lab.setStyleSheet(f"color: {theme.TEXT_FAINT}; font-size: 11px;"
                               f"background: transparent; border: none;")
             head.addWidget(lab)

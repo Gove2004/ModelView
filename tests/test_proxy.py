@@ -135,7 +135,7 @@ def main():
     cfg.add_provider("TestProvider", f"http://127.0.0.1:{up_port}/v1", "test-key")
     cfg.add_provider("NoKeyProvider", f"http://127.0.0.1:{up_port}/v1", "")
     cfg.set_mappings([
-        {"alias": "modelview:main", "provider": "TestProvider", "model": "model-a"},
+        {"alias": "main", "provider": "TestProvider", "model": "model-a"},
         {"alias": "play", "provider": "NoKeyProvider", "model": "model-c"},
         {"alias": "empty-slot", "provider": "", "model": ""},
         {"alias": "ghost", "provider": "DeletedProvider", "model": "model-a"},
@@ -145,7 +145,7 @@ def main():
     # ---- 0. 模型位配置 CRUD ----
     check("首次写入 4 个位", len(cfg.get_mappings()) == 4)
     check("按别名查位(不区分大小写)",
-          (cfg.get_mapping_by_alias("MODELVIEW:MAIN") or {}).get("model") == "model-a")
+          (cfg.get_mapping_by_alias("MAIN") or {}).get("model") == "model-a")
     check("查不到的位返回 None", cfg.get_mapping_by_alias("nope") is None)
     check("位自动分配 id", all(m.get("id") for m in cfg.get_mappings()))
     cfg.set_mappings([{"id": "keep", "alias": "keep", "provider": "p", "model": "m"},
@@ -153,7 +153,7 @@ def main():
     check("全量替换 + 丢弃无别名行", len(cfg.get_mappings()) == 1)
     check("带 id 的行保留原 id", cfg.get_mappings()[0]["id"] == "keep")
     cfg.set_mappings([
-        {"alias": "modelview:main", "provider": "TestProvider", "model": "model-a"},
+        {"alias": "main", "provider": "TestProvider", "model": "model-a"},
         {"alias": "play", "provider": "NoKeyProvider", "model": "model-c"},
         {"alias": "empty-slot", "provider": "", "model": ""},
         {"alias": "ghost", "provider": "DeletedProvider", "model": "model-a"},
@@ -193,7 +193,7 @@ def main():
         return json.loads(body).get("echo_model")
 
     # 别名路由: 客户端只填别名, 由映射决定转发到哪家、用哪个模型
-    status, hdrs, body = post({"model": "modelview:main", "messages": []})
+    status, hdrs, body = post({"model": "main", "messages": []})
     check("模型位路由到 TestProvider", status == 200 and echo(body) == "model-a"
           and hdrs.get("x-echo-auth") == "Bearer test-key",
           f"{status} / {echo(body)} / {hdrs.get('x-echo-auth')}")
@@ -206,26 +206,26 @@ def main():
     # 错误 1: 请求的模型名不在自定义映射中
     status, hdrs, body = post({"model": "model-a", "messages": []})
     check("未配置的模型名 → 400", status == 400, str(status))
-    check("错误 1 提示列出可用位", "modelview:main".encode("utf-8") in body, str(body[:120]))
+    check("错误 1 提示列出可用位", "main".encode("utf-8") in body, str(body[:120]))
     status, hdrs, body = post({"model": "TestProvider:model-a", "messages": []})
     check("name:model 直连已移除 → 400", status == 400, str(status))
     check("错误提示引导去映射配置", "映射".encode("utf-8") in body, str(body[:120]))
     status, hdrs, body = post({"model": "zzz:foo", "messages": []})
     check("未知别名 → 400", status == 400, str(status))
 
-    # 错误 2: 位存在但没绑到实际模型
+    # 错误 2: 映射存在但没绑到实际模型
     status, hdrs, body = post({"model": "empty-slot", "messages": []})
     check("空位(未绑定) → 400", status == 400, str(status))
     check("错误 2 提示补全映射", "尚未绑定".encode("utf-8") in body, str(body[:120]))
     status, hdrs, body = post({"model": "ghost", "messages": []})
-    check("位指向已删除提供商 → 400", status == 400, str(status))
+    check("映射指向已删除提供商 → 400", status == 400, str(status))
     check("提示提供商不存在", "不存在".encode("utf-8") in body, str(body[:120]))
 
     # ---- 4. /models 仅返回已配置的模型位 ----
     status, hdrs, body = http("GET", base + "/v1/models")
     check("代理 /models 返回 200", status == 200, str(status))
     ids = [d["id"] for d in json.loads(body).get("data", [])]
-    check("/models 只返回已绑定的位", ids == ["modelview:main", "play"], str(ids))
+    check("/models 只返回已绑定的位", ids == ["main", "play"], str(ids))
     check("/models 不含空位", "empty-slot" not in ids, str(ids))
     check("/models 不含悬空位", "ghost" not in ids, str(ids))
     check("/models 不再返回 name:model 直连名",
@@ -236,7 +236,7 @@ def main():
     check("无模型字段请求返回 400", status == 400, str(status))
 
     # ---- 5. SSE 流式 ----
-    status, hdrs, body = post({"model": "modelview:main", "stream": True, "messages": []})
+    status, hdrs, body = post({"model": "main", "stream": True, "messages": []})
     check("流式转发返回 200", status == 200, str(status))
     check("流式内容透传 (SSE)", b"[DONE]" in body, body[:120])
 
@@ -250,11 +250,11 @@ def main():
     check("自循环返回明确错误", "循环转发".encode("utf-8") in body, str(body[:80]))
 
     # ---- 7. resolve_route 直接验证 ----
-    p, m, err = resolve_route(cfg, "modelview:main")
-    check("resolve: 命中模型位", p is not None and p["name"] == "TestProvider"
+    p, m, err = resolve_route(cfg, "main")
+    check("resolve: 命中自定义映射", p is not None and p["name"] == "TestProvider"
           and m == "model-a" and err is None, str((p and p["name"], m, err)))
     p, m, err = resolve_route(cfg, "play")
-    check("resolve: 第二位命中 NoKeyProvider", p is not None and p["name"] == "NoKeyProvider",
+    check("resolve: 第二条映射命中 NoKeyProvider", p is not None and p["name"] == "NoKeyProvider",
           str((p and p["name"], m)))
     p, m, err = resolve_route(cfg, "nope")
     check("resolve: 未知别名返回错误", p is None and "未匹配" in (err or ""), str(err))

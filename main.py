@@ -3,7 +3,7 @@
 
 以 pythonw.exe 运行时无控制台窗口, 出错信息写入 error.log。
 用法:
-  双击 启动.vbs        (推荐: 无控制台 + 托盘常驻)
+  双击 ModelView.vbs   (推荐: 无控制台 + 托盘常驻)
   或命令行 .venv\\Scripts\\python.exe main.py
 """
 import os

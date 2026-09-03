@@ -125,17 +125,27 @@ QPushButton#cardDanger:hover {{
     background: {RED_DIM};
     color: #ffffff;
 }}
-/* 映射弹窗: 行内删除钮 */
+/* 映射弹窗: 行内删除钮(文字) */
 QPushButton#rowDel {{
     background: transparent;
     border: none;
     color: {TEXT_FAINT};
-    font-size: 15px;
+    font-size: 11px;
+    padding: 3px 0;
     border-radius: 5px;
 }}
 QPushButton#rowDel:hover {{
     background: {RED_DIM};
     color: #ffffff;
+}}
+/* 危险主按钮(确认删除) */
+QPushButton#danger {{
+    background: {RED_DIM};
+    border: 1px solid {RED_DIM};
+    color: #ffffff;
+}}
+QPushButton#danger:hover {{
+    background: #c05552;
 }}
 /* 输入框 */
 QLineEdit {{
