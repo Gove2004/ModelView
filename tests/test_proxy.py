@@ -209,7 +209,7 @@ def main():
     check("错误 1 提示列出可用位", "modelview:main".encode("utf-8") in body, str(body[:120]))
     status, hdrs, body = post({"model": "TestProvider:model-a", "messages": []})
     check("name:model 直连已移除 → 400", status == 400, str(status))
-    check("旧写法提示改用模型位", "模型位".encode("utf-8") in body, str(body[:120]))
+    check("错误提示引导去映射配置", "映射".encode("utf-8") in body, str(body[:120]))
     status, hdrs, body = post({"model": "zzz:foo", "messages": []})
     check("未知别名 → 400", status == 400, str(status))
 

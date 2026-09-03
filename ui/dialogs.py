@@ -1,10 +1,11 @@
 # -*- coding: utf-8 -*-
-"""ModelView: 提供商编辑小弹层 + 模型位映射弹窗。
+"""ModelView: 提供商编辑小弹层 + 自定义映射弹窗。
 
-无边框圆角深色小窗, 悬浮于屏幕正中心, 非模态(不阻塞主循环)。
-保存/取消通过回调交给 App 处理(校验在 App 侧, 出错 set_error 弹回)。
+两者都是屏幕正中心的无边框圆角小窗,非模态(不阻塞主循环),
+并支持「渐显放大 / 渐隐收缩」入场退场动画(见 CenterMixin)。
+保存/取消通过回调交给 App 处理(校验在 App 侧,出错 set_error 弹回)。
 """
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import Qt, Signal, QSize, Property
 from PySide6.QtWidgets import (
     QDialog, QFrame, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit,
     QPushButton, QCheckBox, QComboBox, QScrollArea, QWidget,
@@ -14,8 +15,57 @@ from . import theme
 
 W = 380
 
+# 缩放动画期间解除尺寸约束用的上限(QWidget 的 QWIDGETSIZE_MAX)
+_SIZE_MAX = 16777215
+# 中心弹窗的入场/退场缩放比(1.0 = 原尺寸)
+SCALE_FROM = 0.94
 
-class ProviderDialog(QDialog):
+
+class CenterMixin:
+    """屏幕正中心弹窗的公共行为: 尺寸锚点 / 居中 / 缩放。
+
+    动画期间必须临时解除固定尺寸约束,否则 setGeometry 改不了窗口大小;
+    动画收尾再由 center_on() 恢复成固定尺寸并归位(防止用户拖出变形)。
+
+    centerScale 是暴露给 QPropertyAnimation 的属性(面板显隐时跟随
+    渐显渐隐 + 轻微缩放),以弹窗当前位置的中心点为轴。
+    """
+
+    def _init_center(self, w, h):
+        self._nat_w, self._nat_h = int(w), int(h)
+        self._cx = self._cy = 0
+        self._scale = 1.0
+
+    def natural_size(self):
+        return QSize(self._nat_w, self._nat_h)
+
+    def center_on(self, x, y):
+        self._cx, self._cy = int(x), int(y)
+        self.setFixedSize(self._nat_w, self._nat_h)
+        self.move(int(x - self._nat_w / 2), int(y - self._nat_h / 2))
+
+    def apply_scale(self, cx, cy, s):
+        """以 (cx, cy) 为中心按 s 倍摆放;s >= 1 视为结束态(恢复原尺寸并居中)。"""
+        if s >= 1.0:
+            self.center_on(cx, cy)
+            return
+        self.setMinimumSize(0, 0)
+        self.setMaximumSize(_SIZE_MAX, _SIZE_MAX)
+        w, h = self._nat_w * s, self._nat_h * s
+        self.setGeometry(int(cx - w / 2), int(cy - h / 2), int(w), int(h))
+
+    # ---- 供 QPropertyAnimation 驱动的缩放属性 ----
+    def _scale_get(self):
+        return self._scale
+
+    def _scale_set(self, s):
+        self._scale = float(s)
+        self.apply_scale(self._cx, self._cy, s)
+
+    centerScale = Property(float, _scale_get, _scale_set)
+
+
+class ProviderDialog(QDialog, CenterMixin):
     saved = Signal(str, str, str)   # name, url, key
 
     def __init__(self, parent=None):
@@ -77,7 +127,9 @@ class ProviderDialog(QDialog):
 
         # 动态高度: 内容确定后按需调整(固定宽, 高度由布局算)
         self.adjustSize()
-        self.setFixedHeight(panel.sizeHint().height() + 8)
+        nat_h = panel.sizeHint().height() + 8
+        self.setFixedHeight(nat_h)
+        self._init_center(W, nat_h)
 
     @staticmethod
     def _field(lay, label_text):
@@ -108,9 +160,6 @@ class ProviderDialog(QDialog):
             self._error.setText("")
             self._error.hide()
 
-    def center_on(self, x, y):
-        self.move(int(x - self.width() / 2), int(y - self.height() / 2))
-
     def _try_save(self):
         self.saved.emit(self._name.text().strip(),
                         self._url.text().strip(),
@@ -123,25 +172,16 @@ class ProviderDialog(QDialog):
             super().keyPressEvent(e)
 
 
-# ---------------------------------------------------------------- 模型位映射弹窗
-
-def _hint(text, size=11, color=None):
-    lab = QLabel(text)
-    lab.setWordWrap(True)
-    lab.setStyleSheet(
-        f"color: {color or theme.TEXT_FAINT}; font-size: {size}px;"
-        f"background: transparent; border: none;")
-    return lab
-
+# ---------------------------------------------------------------- 自定义映射弹窗
 
 class MappingRow(QFrame):
-    """一行模型位: 自定义模型名称 | 提供商下拉 | 模型下拉(可手填) | 删除。"""
+    """一行自定义映射: 自定义模型名称 | 提供商下拉 | 模型下拉(可手填) | 删除。"""
 
     remove_requested = Signal(object)      # 传出自身, 便于直接移除
 
-    W_ALIAS, W_PROV, W_MODEL, W_DEL = 168, 132, 200, 26
-    NO_SEL = "— 未选择 —"
-    NO_PROV = "— 未绑定 —"
+    W_ALIAS, W_PROV, W_MODEL, W_DEL = 150, 108, 172, 26
+    NO_SEL = "未选择"
+    NO_PROV = "未绑定"
 
     def __init__(self, mid="", alias="", provider="", model="",
                  providers=(), models_by_provider=None):
@@ -156,7 +196,7 @@ class MappingRow(QFrame):
         lay.setSpacing(8)
 
         self._alias = QLineEdit(alias)
-        self._alias.setPlaceholderText("如 modelview:main")
+        self._alias.setPlaceholderText("如 main")
         self._alias.setFixedWidth(self.W_ALIAS)
         lay.addWidget(self._alias)
 
@@ -177,7 +217,7 @@ class MappingRow(QFrame):
         self._del.setObjectName("rowDel")
         self._del.setFixedSize(self.W_DEL, 26)
         self._del.setCursor(Qt.CursorShape.PointingHandCursor)
-        self._del.setToolTip("删除该模型位")
+        self._del.setToolTip("删除该映射")
         # clicked(checked) 会顶替 lambda 形参 → 外层吞掉
         self._del.clicked.connect(
             lambda _checked=False, s=self: s.remove_requested.emit(s))
@@ -235,15 +275,15 @@ class MappingRow(QFrame):
         return "" if t == self.NO_SEL else t
 
 
-class MappingDialog(QDialog):
-    """模型位映射配置: 屏幕正中心弹窗, 每行一个位。
+class MappingDialog(QDialog, CenterMixin):
+    """自定义映射配置: 屏幕正中心弹窗, 每行一条映射。
 
     saved 信号传出全部行 [{id, alias, provider, model}, ...],由 App 校验落盘。
     """
 
     saved = Signal(object)
 
-    W, H = 620, 460
+    W, H = 544, 376
 
     def __init__(self, parent=None):
         super().__init__(None)
@@ -253,6 +293,7 @@ class MappingDialog(QDialog):
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         self.setModal(False)
         self.setFixedSize(self.W, self.H)
+        self._init_center(self.W, self.H)
 
         outer = QVBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
@@ -263,27 +304,26 @@ class MappingDialog(QDialog):
         lay.setContentsMargins(20, 16, 20, 16)
         lay.setSpacing(10)
 
-        self._title = QLabel("模型位映射")
+        self._title = QLabel("自定义映射")
         self._title.setStyleSheet(
             f"color: {theme.TEXT}; font-size: {theme.FS_DIALOG_TITLE}px; font-weight: 600;"
             f"background: transparent; border: none;")
         lay.addWidget(self._title)
-
-        lay.addWidget(_hint("客户端里固定填「自定义模型名」; 在这里切换它指向哪个提供商的哪个模型, "
-                            "客户端配置无需再改。"))
 
         head = QHBoxLayout()
         head.setContentsMargins(0, 0, 0, 0)
         head.setSpacing(8)
         for text, w in (("自定义模型名称", MappingRow.W_ALIAS),
                         ("提供商", MappingRow.W_PROV),
-                        ("模型", MappingRow.W_MODEL)):
+                        ("模型", MappingRow.W_MODEL),
+                        ("删除", MappingRow.W_DEL)):
             lab = QLabel(text)
             lab.setFixedWidth(w)
+            lab.setAlignment(Qt.AlignmentFlag.AlignCenter if w <= 40
+                             else Qt.AlignmentFlag.AlignLeft)
             lab.setStyleSheet(f"color: {theme.TEXT_FAINT}; font-size: 11px;"
                               f"background: transparent; border: none;")
             head.addWidget(lab)
-        head.addSpacing(MappingRow.W_DEL)
         head.addStretch(1)
         lay.addLayout(head)
 
@@ -310,14 +350,14 @@ class MappingDialog(QDialog):
 
         row = QHBoxLayout()
         row.setSpacing(8)
-        btn_add = QPushButton("+ 新增位")
+        btn_add = QPushButton("新增")
         btn_add.setObjectName("ghost")
         btn_add.setFlat(True)
         btn_add.setCursor(Qt.CursorShape.PointingHandCursor)
         btn_add.clicked.connect(lambda _checked=False: self._add_row())
         row.addWidget(btn_add)
         row.addStretch(1)
-        cancel = QPushButton("取消")
+        cancel = QPushButton("关闭")
         cancel.setCursor(Qt.CursorShape.PointingHandCursor)
         cancel.clicked.connect(self.reject)
         ok = QPushButton("保存")
@@ -351,7 +391,7 @@ class MappingDialog(QDialog):
         self._sync_title()
 
     def _sync_title(self):
-        self._title.setText(f"模型位映射({len(self._rows)})")
+        self._title.setText(f"自定义映射({len(self._rows)}个)")
 
     # ---- 对外 ----
     def set_data(self, mappings, providers, models_by_provider=None):
@@ -387,9 +427,7 @@ class MappingDialog(QDialog):
             self._error.setText("")
             self._error.hide()
 
-    def center_on(self, x, y):
-        self.move(int(x - self.width() / 2), int(y - self.height() / 2))
-
+    # center_on / apply_scale / centerScale 由 CenterMixin 提供
     def _try_save(self):
         self.saved.emit(self.rows())
 

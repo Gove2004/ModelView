@@ -21,13 +21,13 @@ from core.config import Config
 from core.proxy import ProxyServer
 from . import theme
 from .panels import LeftPanel, RightPanel, TopSwitch, LogDock
-from .dialogs import ProviderDialog, MappingDialog
+from .dialogs import ProviderDialog, MappingDialog, SCALE_FROM
 from .hotkey import GlobalHotkey
 
 # ---------------------------------------------------------------- 尺寸
 MARGIN = 14
-CAP_W, CAP_H = 296, 40          # 顶中胶囊: 状态 + 「映射」入口
-LOG_W, LOG_H = 560, 190
+CAP_W, CAP_H = 220, 40          # 顶中胶囊: 映射 | 端口(启停) | 复制
+LOG_W, LOG_H = 560, 160
 LEFT_W, RIGHT_W = 292, 330
 
 
@@ -47,6 +47,7 @@ class App(QObject):
         self._dlg = None
         self._dlg_edit_pid = None
         self._mdlg = None
+        self._dlg_follow = []       # 面板显隐时跟随渐隐渐显的中心弹窗
 
         screen = QApplication.primaryScreen()
         self._geo = screen.availableGeometry()
@@ -59,14 +60,13 @@ class App(QObject):
         self.right = RightPanel(RIGHT_W, wing_h)
         self.top = TopSwitch(CAP_W, CAP_H)
         self.logdock = LogDock(min(LOG_W, int(self._geo.width() * 0.5)), LOG_H)
+        log_w = self.logdock.width()
 
         self._targets = {
             self.left: QPoint(self._geo.x(), wing_y),
             self.right: QPoint(self._geo.right() - RIGHT_W + 1, wing_y),
             self.top: QPoint(self._geo.center().x() - CAP_W // 2, self._geo.y() + MARGIN),
-            self.logdock: QPoint(self._geo.center().x()
-                                 - min(LOG_W, int(self._geo.width() * 0.5)) // 2,
-                                 self._geo.bottom() - MARGIN - LOG_H + 1),
+            self.logdock: self._logdock_target(log_w),
         }
         for wid, t in self._targets.items():
             wid.setWindowTitle("ModelView")
@@ -80,6 +80,7 @@ class App(QObject):
         self.right.copy_requested.connect(self._copy_model)
         self.top.toggle_requested.connect(self._toggle_proxy)
         self.top.mapping_requested.connect(self._open_mapping)
+        self.top.copy_requested.connect(self._copy_address)
 
         self.sig_log.connect(self.logdock.append)
         self.sig_probe.connect(self._on_probe_done)
@@ -116,8 +117,8 @@ class App(QObject):
         if cfg.is_proxy_enabled():
             QTimer.singleShot(300, self._toggle_proxy)   # 恢复上次转发状态
         self._anim_to_targets(show=True)
-        self._nlog("ModelView 已就绪 · Ctrl+Alt+M 显隐面板 · 顶部胶囊开关代理, "
-                   "「映射」配置模型位")
+        self._nlog("ModelView 已就绪 · Ctrl+Alt+M 显隐面板 · 顶栏: 映射 / "
+                   "端口(点按启停) / 复制地址")
 
     # ------------------------------------------------------------ 日志
     def _proxy_log_cb(self, msg):
@@ -128,22 +129,29 @@ class App(QObject):
         self.sig_log.emit(level, msg)
 
     # ------------------------------------------------------------ 显隐 / 动画
+    def _logdock_target(self, w=None):
+        """日志 dock 的贴底目标位: 随当前高度(展开/折叠)变化, 底边恒与屏幕相切。"""
+        return QPoint(self._geo.center().x() - (w or self.logdock.width()) // 2,
+                      self._geo.bottom() - MARGIN - self.logdock.height() + 1)
+
     def _start_pos(self, wid):
         """飞出/飞入前的屏外位置: 左翼→左、右翼→右、顶栏→上、日志条→下,
-        位移量 = 自身宽/高 + 60, 保证整块完全离开屏幕, 不留残余可见。"""
-        t = self._targets[wid]
+        位移量 = 自身宽/高 + 60, 保证整块完全离开屏幕, 不留残余可见。
+        日志 dock 底边恒与屏幕相切, 直接以底边为基准向下推出。"""
         if wid is self.left:
-            return QPoint(t.x() - wid.width() - 60, t.y())
+            return QPoint(self._targets[wid].x() - wid.width() - 60, self._targets[wid].y())
         if wid is self.right:
-            return QPoint(t.x() + wid.width() + 60, t.y())
+            return QPoint(self._targets[wid].x() + wid.width() + 60, self._targets[wid].y())
         if wid is self.top:
-            return QPoint(t.x(), t.y() - wid.height() - 60)
-        return QPoint(t.x(), t.y() + wid.height() + 60)
+            return QPoint(self._targets[wid].x(), self._targets[wid].y() - wid.height() - 60)
+        return QPoint(self._targets[wid].x(),
+                      self._geo.bottom() - MARGIN + 60)
 
     def _anim_to_targets(self, show=True, done=None):
         if self._anim_busy:
             return
         self._anim_busy = True
+        follow = list(self._dlg_follow)     # 本轮要联动的中心弹窗(隐藏方向进入时快照)
 
         def _finish():
             self._anim_busy = False
@@ -154,10 +162,25 @@ class App(QObject):
                 return
             if not show:
                 self._hide_all_now()
+                for d in follow:
+                    d.hide()
+                    d.setWindowOpacity(1.0)
+                    d.centerScale = 1.0      # 复位几何, 下次展示完整尺寸
+                # follow 保留到下次 show, 用于把弹窗一并唤回
+            else:
+                self._dlg_follow = []
             if done is not None:
                 done()
 
         if not self._animate:
+            if show:
+                for d in follow:
+                    d.show()
+            else:
+                for d in follow:
+                    d.hide()
+            if show:
+                self._targets[self.logdock] = self._logdock_target()
             for wid, t in self._targets.items():
                 if show:
                     wid.show()
@@ -165,12 +188,34 @@ class App(QObject):
                 else:
                     wid.hide()
             self._anim_busy = False
+            if show:
+                self._dlg_follow = []
             if done is not None:
                 done()
             return
 
+        if show:
+            # 日志 dock 可能处于展开/折叠任意高度: 每次显示前重算贴底目标
+            self._targets[self.logdock] = self._logdock_target()
         group = QParallelAnimationGroup(self)
         group.finished.connect(_finish)
+        # 中心弹窗: 渐显渐隐 + 轻微缩放(围绕自身中心), 与四窗飞入飞出并行
+        for d in follow:
+            d.centerScale = SCALE_FROM if show else d.centerScale
+            if show:
+                d.show()
+                d.setWindowOpacity(0.0)
+                d.raise_()
+            for prop, a, b in (("windowOpacity", 0.0 if show else 1.0,
+                                1.0 if show else 0.0),
+                               ("centerScale", SCALE_FROM if show else 1.0,
+                                1.0 if show else SCALE_FROM)):
+                anim = QPropertyAnimation(d, prop.encode(), group)
+                anim.setDuration(300)
+                anim.setEasingCurve(QEasingCurve.Type.OutCubic)
+                anim.setStartValue(a)
+                anim.setEndValue(b)
+                group.addAnimation(anim)
         for wid, t in self._targets.items():
             anim = QPropertyAnimation(wid, b"pos", group)
             anim.setDuration(360)
@@ -191,6 +236,14 @@ class App(QObject):
         for wid in self._targets:
             wid.hide()
 
+    def _visible_centers(self):
+        """当前可见的中心弹窗(提供商编辑/映射), 供面板隐藏时联动。"""
+        out = []
+        for d in (self._dlg, self._mdlg):
+            if d is not None and d.isVisible():
+                out.append(d)
+        return out
+
     def _toggle_visible(self):
         if self._anim_busy:
             # 动画还没走完又触发切换(热键连按/托盘连点): 记下补切, 防吞事件
@@ -201,6 +254,9 @@ class App(QObject):
     def _set_visible(self, show):
         self._visible = show
         self._act_show.setText("隐藏面板" if show else "显示面板")
+        if not show:
+            # 面板隐藏时把当前打开的中心弹窗一并带走
+            self._dlg_follow = self._visible_centers()
         self._anim_to_targets(show=show)
 
     def _on_tray_activated(self, reason):
@@ -253,7 +309,7 @@ class App(QObject):
             dlg.set_error("name 不能为空")
             return
         if ":" in name:
-            dlg.set_error("name 不能包含 \":\", 避免与模型位名称混淆")
+            dlg.set_error("name 不能包含 \":\", 避免与自定义模型名混淆")
             return
         low = name.lower()
         if url and not (url.startswith("http://") or url.startswith("https://")):
@@ -294,6 +350,11 @@ class App(QObject):
     def _copy_model(self, label):
         QApplication.clipboard().setText(label)
         self._nlog(f"已复制模型名: {label}", "ok")
+
+    def _copy_address(self, port):
+        addr = f"http://127.0.0.1:{port}"
+        QApplication.clipboard().setText(addr)
+        self._nlog(f"已复制代理地址: {addr}", "ok")
 
     # ------------------------------------------------------------ 模型位映射
     def _models_by_provider(self):
@@ -337,10 +398,10 @@ class App(QObject):
         self.cfg.save()
         dlg.hide()
         bound = sum(1 for r in rows if r.get("provider") and r.get("model"))
-        empty = len([r for r in rows if (r.get("alias") or "").strip()]) - bound
-        msg = f"已保存 {bound + empty} 个模型位(其中 {bound} 个已绑定)"
-        if empty:
-            self._nlog(msg + f" · {empty} 个空位绑定后才能转发", "warn")
+        named = len([r for r in rows if (r.get("alias") or "").strip()])
+        msg = f"已保存 {named} 条映射(其中 {bound} 个已绑定)"
+        if bound < named:
+            self._nlog(msg + f" · {named - bound} 个空位绑定后才能转发", "warn")
         else:
             self._nlog(msg, "ok")
 

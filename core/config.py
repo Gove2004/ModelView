@@ -8,12 +8,12 @@
   "providers": [              # 提供商列表,可保存多个
     {"id": "...", "name": "...", "url": "...", "key": "..."}
   ],
-  "mappings": [               # 模型位: 自定义模型名 -> 提供商 + 实际模型
-    {"id": "...", "alias": "modelview:main", "provider": "ds", "model": "deepseek-chat"}
+  "mappings": [               # 自定义映射: 自定义模型名 -> 提供商 + 实际模型
+    {"id": "...", "alias": "main", "provider": "ds", "model": "deepseek-chat"}
   ]
 }
 
-路由只认 mappings 里的 alias: 客户端固定填 alias(如 modelview:main),
+路由只认 mappings 里的 alias: 客户端固定填 alias(如 main),
 切换模型只需在 ModelView 里改映射,不必改任何客户端配置。
 alias 完全自定义,可自由增删改(预置的三个只是初始值)。
 """
@@ -34,7 +34,7 @@ DEFAULTS = {
 }
 
 # 预置的三个空位: 只是初始值, 可自由改名 / 删除 / 新增
-DEFAULT_MAPPING_ALIASES = ("modelview:main", "modelview:play", "modelview:test")
+DEFAULT_MAPPING_ALIASES = ("main", "play", "test")
 
 
 class Config:
@@ -56,7 +56,7 @@ class Config:
                 self._data = {**DEFAULTS, **raw}
             self._data.pop("active_provider_id", None)  # 清理旧版本遗留字段
             if self._data.get("mappings") is None:
-                fresh = True     # 老配置升级: 补上默认模型位
+                fresh = True     # 老配置升级: 补上默认映射位
         except FileNotFoundError:
             fresh = True         # 首次运行:生成默认配置
         except (json.JSONDecodeError, OSError) as e:
@@ -97,7 +97,7 @@ class Config:
         return None
 
     def get_provider_by_name(self, name):
-        """按名称(不区分大小写)查找提供商,用于模型位映射里的 provider 字段。"""
+        """按名称(不区分大小写)查找提供商,用于自定义映射里的 provider 字段。"""
         low = (name or "").strip().lower()
         with self._lock:
             for p in self._data.get("providers") or []:
@@ -105,7 +105,7 @@ class Config:
                     return dict(p)
         return None
 
-    # ---------- 模型位 (mappings) ----------
+    # ---------- 自定义映射 (mappings) ----------
     @staticmethod
     def _normalize_mappings(rows):
         """清洗映射行: 去重空白、跳过无别名的行、保证每项都有 id。"""
@@ -138,7 +138,7 @@ class Config:
         return None
 
     def set_mappings(self, rows):
-        """全量替换模型位(弹窗即全量编辑);行内带 id 的保留原 id。"""
+        """全量替换自定义映射(弹窗即全量编辑);行内带 id 的保留原 id。"""
         with self._lock:
             self._data["mappings"] = self._normalize_mappings(rows)
 

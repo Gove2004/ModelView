@@ -4,7 +4,7 @@
 四个贴边悬浮块, 全部是「透明无边框顶层窗 + 实心圆角面板」:
   - LeftPanel   左翼: 模型提供商列表(卡片直显操作钮 + 搜索筛选)
   - RightPanel  右翼: 模型探测列表(树状折叠, 单击模型行即复制, 支持筛选)
-  - TopSwitch   顶部中央: 代理开关胶囊(不带提供商计数)
+  - TopSwitch   顶部中央: 映射 | 端口(启停) | 复制 三段胶囊
   - LogDock     底部中央: toast 风格日志(可上下滚动, 新条渐显)
 
 面板本身只发信号 + 收简单回调, 业务装配由 ui.app.App 负责。
@@ -462,65 +462,70 @@ class RightPanel(FloatingWindow):
 # ---------------------------------------------------------------- 顶中: 代理开关
 
 class TopSwitch(FloatingWindow):
-    """顶部中央胶囊: 左半点击启停代理, 右侧「映射」按钮打开模型位配置。
+    """顶部中央胶囊: 映射 | 端口(启停) | 复制。
 
-    映射本质就是路由表, 因此入口直接做在路由开关上, 不再另开面板。
+    三段独立点击区(路由开关与映射本就是一体, 入口直接做在一起):
+      - 「映射」: 打开自定义映射弹窗
+      - 「端口」: 点击启停本地代理, 数字颜色 灰=停 / 绿=运行
+      - 「复制」: 复制 http://127.0.0.1:<port> 进剪贴板
     """
 
     toggle_requested = Signal()
     mapping_requested = Signal()
+    copy_requested = Signal(str)     # 当前端口
 
     def __init__(self, w, h):
         super().__init__(w, h)
-        inner = ClickableFrame(self.panel)
-        inner.setCursor(Qt.CursorShape.PointingHandCursor)
-        inner.setToolTip("点击启停本地转发代理")
-        inner.clicked.connect(self.toggle_requested)
+        inner = QFrame(self.panel)
         inner.setStyleSheet(
-            f"ClickableFrame {{ background: {theme.BG_CARD}; border: 1px solid {theme.BORDER_STRONG};"
-            f" border-radius: 16px; }}"
-            f"ClickableFrame:hover {{ background: {theme.BG_CARD_HOVER}; }}")
-        row = _hbox((18, 0, 10, 0), spacing=10, parent=inner)
-        self._dot = dot_label(theme.GRAY_DOT, 10)
-        row.addWidget(self._dot)
-        self._label = QLabel("代理未运行")
-        self._label.setStyleSheet(
-            f"color: {theme.TEXT_DIM}; background: transparent; border: none;"
-            f"font-size: {theme.FS_BASE}px; font-weight: 600;")
-        row.addWidget(self._label)
-        row.addStretch(1)
+            f"QFrame {{ background: {theme.BG_CARD}; border: 1px solid {theme.BORDER_STRONG};"
+            f" border-radius: 14px; }}")
+        row = _hbox((10, 0, 10, 0), spacing=4, parent=inner)
 
-        sep = QFrame(inner)
-        sep.setFrameShape(QFrame.Shape.VLine)
-        sep.setFixedWidth(1)
-        sep.setStyleSheet(f"color: {theme.BORDER_STRONG}; background: {theme.BORDER_STRONG};"
-                          f"border: none;")
-        row.addWidget(sep)
-
-        self._btn_map = ghost_button("映射", "配置模型位: 自定义模型名 → 提供商 + 模型")
+        self._btn_map = ghost_button("映射", "打开自定义映射窗口")
         self._btn_map.clicked.connect(self.mapping_requested)
         row.addWidget(self._btn_map)
+
+        row.addWidget(self._vsep(inner))
+
+        self._port = 10901
+        self._btn_port = ghost_button("10901", "点击启动本地转发代理")
+        self._btn_port.clicked.connect(self.toggle_requested)
+        row.addWidget(self._btn_port)
+
+        row.addWidget(self._vsep(inner))
+
+        self._btn_copy = ghost_button("复制", "复制代理地址到剪贴板")
+        self._btn_copy.clicked.connect(
+            lambda _checked=False, s=self: s.copy_requested.emit(str(s._port)))
+        row.addWidget(self._btn_copy)
+
+        row.insertStretch(0, 1)
+        row.addStretch(1)
 
         lay = self.body()
         lay.setContentsMargins(6, 6, 6, 6)
         lay.setSpacing(0)
         lay.addWidget(inner)
 
+    @staticmethod
+    def _vsep(parent):
+        s = QFrame(parent)
+        s.setFrameShape(QFrame.Shape.VLine)
+        s.setFixedSize(1, 16)
+        s.setStyleSheet(f"color: {theme.BORDER_STRONG};"
+                        f"background: {theme.BORDER_STRONG}; border: none;")
+        return s
+
     def set_state(self, running, port):
-        if running:
-            self._dot.setStyleSheet(
-                f"background: {theme.GREEN}; border-radius: 5px; border: none;")
-            self._label.setText(f"代理运行中 · {port}")
-            self._label.setStyleSheet(
-                f"color: {theme.GREEN}; background: transparent; border: none;"
-                f"font-size: {theme.FS_BASE}px; font-weight: 600;")
-        else:
-            self._dot.setStyleSheet(
-                f"background: {theme.GRAY_DOT}; border-radius: 5px; border: none;")
-            self._label.setText("代理未运行")
-            self._label.setStyleSheet(
-                f"color: {theme.TEXT_DIM}; background: transparent; border: none;"
-                f"font-size: {theme.FS_BASE}px; font-weight: 600;")
+        """端口数字按代理状态变色: 灰=停, 绿=运行(点击仍可启停)。"""
+        self._port = int(port)
+        self._btn_port.setText(str(self._port))
+        color = theme.GREEN if running else theme.TEXT_DIM
+        self._btn_port.setStyleSheet(
+            f"color: {color}; font-size: {theme.FS_BASE}px; font-weight: 600;")
+        self._btn_port.setToolTip(
+            "点击停止本地转发代理" if running else "点击启动本地转发代理")
 
 
 # ---------------------------------------------------------------- 底部: toast 日志
@@ -573,21 +578,97 @@ class ToastRow(QFrame):
 
 
 class LogDock(FloatingWindow):
-    """底部中央日志条: toast 样式条目 + 可上下滚动 + 渐显。"""
+    """底部中央日志条: toast 样式条目 + 可上下滚动 + 渐显。
+
+    支持展开 / 折叠两种高度(默认折叠, 只留标题行), 切换带平滑
+    过渡动画, 窗口始终底边贴屏(折叠时顶部向下收, 展开时向上长)。
+    """
 
     MAX_ROWS = 200
+    COLLAPSED_H = 52        # 折叠态: 仅标题行的高度
+    _SIZE_MAX = 16777215
 
     def __init__(self, w, h):
         super().__init__(w, h)
+        self._exp_h = int(h)                 # 展开态高度(调用方传入 LOG_H)
+        self._expanded = False
+        self._expand_anim = None
+
+        self._btn_toggle = ghost_button("展开 ▴", "展开 / 折叠日志面板")
+        self._btn_toggle.clicked.connect(self._on_toggle)
         btn = ghost_button("清空", "清空日志")
         btn.clicked.connect(self.clear)
-        self.header("日志", btn)
+        self.header("日志", self._btn_toggle, btn)
         self._list = QListWidget(self.panel)
         self._list.setSpacing(1)
         self._list.setUniformItemSizes(True)
         self._list.setVerticalScrollMode(QListWidget.ScrollMode.ScrollPerPixel)
         self.body().addWidget(self._list, 1)
 
+        # 启动即折叠; 动画尚未发生, 直接定位即可
+        self.setFixedSize(self.width(), self.COLLAPSED_H)
+        self._remask(self.COLLAPSED_H)
+
+    # ---- 展开 / 折叠 ----
+    def is_expanded(self):
+        return self._expanded
+
+    def set_expanded(self, expanded, animate=True):
+        """切到指定状态; 动画沿底边上下伸缩, 非动画路径一步到位。"""
+        expanded = bool(expanded)
+        if expanded == self._expanded:
+            return
+        target_h = self._exp_h if expanded else self.COLLAPSED_H
+        cur = self.height()
+        if cur == target_h:
+            self._expanded = expanded
+            self._sync_toggle_text()
+            return
+        bottom = self.y() + cur
+        x, w = self.x(), self.width()
+        if not animate:
+            self._expanded = expanded
+            self.setFixedSize(w, target_h)
+            self.move(x, int(bottom - target_h))
+            self._remask(target_h)
+            self._sync_toggle_text()
+            return
+        if self._expand_anim is not None:
+            return
+        # 动画期间解除固定尺寸约束, 否则 geometry 动不了
+        self.setMinimumSize(0, 0)
+        self.setMaximumSize(self._SIZE_MAX, self._SIZE_MAX)
+        anim = QPropertyAnimation(self, b"geometry", self)
+        anim.setDuration(280)
+        anim.setEasingCurve(QEasingCurve.Type.OutCubic)
+        anim.setStartValue(self.geometry())
+        anim.setEndValue(QRect(x, int(bottom - target_h), w, int(target_h)))
+        anim.finished.connect(
+            lambda: self._finish_expand(expanded, target_h, bottom))
+        anim.start()
+        self._expand_anim = anim
+
+    def _on_toggle(self):
+        self.set_expanded(not self._expanded)
+
+    def _finish_expand(self, expanded, h, bottom):
+        self._expand_anim = None
+        self._expanded = expanded
+        self.setFixedSize(self.width(), h)
+        self.move(self.x(), int(bottom - h))
+        self._remask(h)
+        self._sync_toggle_text()
+
+    def _sync_toggle_text(self):
+        self._btn_toggle.setText("收起 ▾" if self._expanded else "展开 ▴")
+        self._btn_toggle.setToolTip("折叠日志面板" if self._expanded else "展开日志面板")
+
+    def _remask(self, h):
+        path = QPainterPath()
+        path.addRoundedRect(QRectF(0.5, 0.5, self.width() - 1, h - 1), 10, 10)
+        self.setMask(QRegion(path.toFillPolygon().toPolygon()))
+
+    # ---- 内容 ----
     def append(self, level, text):
         row = ToastRow(level, text, self.width())
         item = QListWidgetItem()

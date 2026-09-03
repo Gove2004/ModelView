@@ -42,8 +42,9 @@ def main():
     check("左翼位于屏幕左缘 x=0", a.left.pos().x() == 0)
     check("右翼贴右缘", a.right.pos().x() + a.right.width() == a._geo.width())
     check("日志条贴底部", a.logdock.pos().y() + a.logdock.height() >= a._geo.height() - 14)
-    check("顶开关不显示提供商计数", not hasattr(a.top, "_sub")
-          and "家" not in a.top._label.text())
+    check("顶开关为 映射|端口|复制 三段", not hasattr(a.top, "_label")
+          and a.top._btn_map.text() == "映射" and a.top._btn_copy.text() == "复制"
+          and a.top._btn_port.text() == "10901")
 
     # 日志分级渲染
     for lvl in ("ok", "err", "warn", "req", "info"):
@@ -51,11 +52,20 @@ def main():
     a._nlog("普通请求日志")
     app.processEvents()
     check("日志条可追加(>5 条)", a.logdock._list.count() >= 6)
-    # 日志行高: 单条 22px + 1 spacing, LOG_H=190 → 视口至少可见 5 条
+    # 默认折叠(仅标题行高度), 展开后可见条数与 LOG_H 匹配
+    check("日志 dock 默认折叠", not a.logdock.is_expanded()
+          and a.logdock.height() == a.logdock.COLLAPSED_H)
+    a.logdock.set_expanded(True, animate=False)
+    check("展开日志 dock", a.logdock.is_expanded()
+          and a.logdock.height() == a.logdock._exp_h)
+    # 日志行高: 单条 22px + 1 spacing, LOG_H=160 → 视口至少可见 4 条
     vh = a.logdock._list.viewport().height()
     item_h = a.logdock._list.item(0).sizeHint().height()
     visible = vh // (item_h + a.logdock._list.spacing())
-    check(f"日志视口可见 ≥5 条(实际 {visible})", visible >= 5)
+    check(f"日志视口可见 ≥4 条(实际 {visible})", visible >= 4)
+    a.logdock.set_expanded(False, animate=False)
+    check("可再折叠回去", not a.logdock.is_expanded()
+          and a.logdock.height() == a.logdock.COLLAPSED_H)
     check("左翼无探测按钮(探测归右翼)", not hasattr(a.left, "_btn_probe"))
     check("右翼有探测按钮(探测入口)", a.right._btn_refresh is not None)
     check("右翼按钮文案为'探测'(非'刷新')", a.right._btn_refresh.text() == "探测")
@@ -141,9 +151,14 @@ def main():
     a.right.remove_provider("ds")
     check("删除 ds 节点后剩 1", a.right._tree.topLevelItemCount() == 1)
 
-    # ---- 顶部「映射」入口 + 模型位弹窗 ----
+    # ---- 顶部「映射」入口 + 映射弹窗 ----
     check("顶部胶囊有映射入口", a.top._btn_map is not None
           and a.top._btn_map.text() == "映射")
+    # 复制地址链路: 点[复制] → 剪贴板
+    QApplication.clipboard().setText("")
+    a.top._btn_copy.click()
+    app.processEvents()
+    check("点[复制]复制代理地址", QApplication.clipboard().text() == "http://127.0.0.1:10901")
     a._on_dialog_saved("ds", "https://api.deepseek.com/v1", "sk-test")
     app.processEvents()
     a._open_mapping()
@@ -154,7 +169,9 @@ def main():
           abs(d.pos().x() + d.width() // 2 - a._geo.center().x()) <= 2
           and abs(d.pos().y() + d.height() // 2 - a._geo.center().y()) <= 2)
     check("预置 3 个空位", len(d.rows()) == 3, str([r["alias"] for r in d.rows()]))
-    check("预置位名 modelview:main", d.rows()[0]["alias"] == "modelview:main")
+    check("预置位名 main / play / test", d.rows()[0]["alias"] == "main"
+          and d.rows()[1]["alias"] == "play" and d.rows()[2]["alias"] == "test",
+          str([r["alias"] for r in d.rows()]))
     check("提供商下拉含已配置的 ds", d._rows[0]._prov.count() >= 2)
 
     r0 = d._rows[0]
@@ -183,6 +200,17 @@ def main():
     check("位指向 ds / deepseek-v4-flash",
           m is not None and m["provider"] == "ds"
           and m["model"] == "deepseek-v4-flash", str(m))
+
+    # 中心弹窗随面板显隐联动(隐藏→弹窗一并收走, 显示→唤回)
+    a._open_mapping()
+    app.processEvents()
+    check("联动前映射弹窗可见", d is not None and not d.isHidden())
+    a._set_visible(False)
+    check("面板隐藏时映射弹窗一并隐藏", d.isHidden() and not a._visible)
+    a._set_visible(True)
+    app.processEvents()
+    check("面板显示时映射弹窗恢复", a._visible and not d.isHidden())
+    d.hide()
 
     # 代理真实启停(临时端口)
     ok, msg = a._proxy.start(0)

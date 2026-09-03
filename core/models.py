@@ -4,7 +4,7 @@
 探测结果 [(name, model_ids, error_or_None), ...] 有两个用途:
   - UI 右翼模型树展示
   - 映射弹窗里「模型」下拉的选项来源
-代理的 /models 接口不再依赖它(现在只返回模型位)。
+代理的 /models 接口不再依赖它(现在只返回已绑定的自定义映射)。
 """
 import threading
 import time

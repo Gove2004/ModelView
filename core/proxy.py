@@ -1,8 +1,8 @@
 # -*- coding: utf-8 -*-
 """本地 OpenAI 兼容转发服务(默认端口 10901)。
 
-把 OpenAI 兼容格式的请求按「模型位」转发到对应提供商,并将响应路由返回:
-  - 路由依据: config.mappings 里的 alias(自定义模型名),形如 modelview:main
+把 OpenAI 兼容格式的请求按「自定义映射」转发到对应提供商,并将响应路由返回:
+  - 路由依据: config.mappings 里的 alias(自定义模型名),形如 main / play / test
   - 普通 JSON 响应: 整段读回,原样透传(保留 Content-Length)
   - SSE 流式响应 (stream=true): 用 chunked 逐块透传,实现边生成边输出
   - 上游错误(4xx/5xx、连接失败): 透传状态码,或返回 OpenAI 风格的 error JSON
@@ -54,34 +54,34 @@ def build_target_url(base_url, path):
 
 
 def resolve_route(config, model):
-    """按自定义模型位(mappings.alias)决定路由目标。
+    """按自定义映射(mappings.alias)决定路由目标。
 
     返回 (provider_or_None, real_model_or_None, error_or_None)。
     三种失败情形都会给出可直接读给用户的中文提示:
       1. model 缺失 —— 客户端没带模型名
       2. alias 不存在 —— 请求的模型名不在自定义映射中
-      3. 位已存在但 provider / model 为空,或 provider 已被删除 —— 未配置映射模型
+      3. 别名已存在但 provider / model 为空,或 provider 已被删除 —— 未配置映射模型
     """
     if not isinstance(model, str) or not model.strip():
         available = _alias_list(config)
         return None, None, ("请求未提供 model 字段,请在客户端填写 ModelView 中已配置的"
-                            f"模型位名称(当前可用: {available})。")
+                            f"自定义模型名(当前可用: {available})。")
 
     m = config.get_mapping_by_alias(model)
     if m is None:
-        return None, None, (f"模型 \"{model}\" 未匹配到任何模型位。"
+        return None, None, (f"模型 \"{model}\" 未匹配到任何自定义映射。"
                             f"请在 ModelView 顶部「映射」中配置它,当前可用: {_alias_list(config)}")
 
     alias = m.get("alias")
     provider_name = (m.get("provider") or "").strip()
     real = (m.get("model") or "").strip()
     if not provider_name or not real:
-        return None, None, (f"模型位 \"{alias}\" 尚未绑定提供商和模型,请求无法转发。"
+        return None, None, (f"自定义映射 \"{alias}\" 尚未绑定提供商和模型,请求无法转发。"
                             "请在 ModelView 顶部「映射」中补全。")
 
     provider = config.get_provider_by_name(provider_name)
     if provider is None:
-        return None, None, (f"模型位 \"{alias}\" 指向的提供商 \"{provider_name}\" 已不存在,"
+        return None, None, (f"自定义映射 \"{alias}\" 指向的提供商 \"{provider_name}\" 已不存在,"
                             "请在 ModelView 顶部「映射」中重新绑定。")
     return provider, real, None
 
@@ -90,7 +90,7 @@ def _alias_list(config, limit=8):
     """把当前可用别名拼成 '(a, b, c)' 形式的提示串。"""
     names = [m.get("alias") for m in config.get_mappings() if m.get("alias")]
     if not names:
-        return "(尚未配置任何模型位)"
+        return "(尚未配置任何自定义映射)"
     shown = ", ".join(names[:limit])
     if len(names) > limit:
         shown += f" 等 {len(names)} 个"
@@ -130,7 +130,7 @@ def _make_handler(proxy):
         # ---------- 核心转发 ----------
         def _forward(self):
             started = time.time()
-            # /models: 只列出「模型位」(已完整配置的 alias)
+            # /models: 只列出已完整配置的自定义映射 alias
             if self.command == "GET" and self._is_models_path(self.path):
                 self._serve_models(started)
                 return
@@ -213,10 +213,10 @@ def _make_handler(proxy):
             return p in ("/models", "/v1/models")
 
         def _serve_models(self, started):
-            """返回已配置的模型位列表。
+            """返回已配置的自定义映射列表。
 
-            只列出「别名 + 提供商 + 模型」三者齐全、且提供商仍存在的位;
-            空位/悬空位不暴露给客户端,避免客户端选了必然报错的项。
+            只列出「别名 + 提供商 + 模型」三者齐全、且提供商仍存在的映射;
+            未绑定/悬空的项不暴露给客户端,避免客户端选了必然报错的项。
             """
             data = []
             for m in proxy.config.get_mappings():
