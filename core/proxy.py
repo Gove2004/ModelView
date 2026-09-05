@@ -309,6 +309,7 @@ def _make_handler(proxy):
 
         def _log_request(self, method, path, target, status, started):
             secs = time.time() - started
+            proxy.inc_request()
             proxy.log(f"{method} {path} -> {target} [{status}] {secs:.2f}s")
 
     return Handler
@@ -326,6 +327,9 @@ class ProxyServer:
         self._thread = None
         self._lock = threading.Lock()
         self.port = None
+        # ---- 请求计数(仅统计本次代理运行以来的次数,启动时清零) ----
+        self._count_lock = threading.Lock()
+        self.request_count = 0
 
     def _is_self_url(self, url):
         """提供商 URL 是否指向本地代理自身(避免 /models 聚合时自递归)。"""
@@ -343,6 +347,22 @@ class ProxyServer:
     def running(self):
         return self._server is not None
 
+    # ---------- 请求计数 ----------
+    def inc_request(self):
+        """请求完成时递增计数(线程安全)。返回递增后的值。"""
+        with self._count_lock:
+            self.request_count += 1
+            return self.request_count
+
+    def reset_count(self):
+        """清零请求计数。"""
+        with self._count_lock:
+            self.request_count = 0
+
+    def get_count(self):
+        with self._count_lock:
+            return self.request_count
+
     def start(self, port):
         with self._lock:
             if self._server is not None:
@@ -357,6 +377,7 @@ class ProxyServer:
             self._thread = threading.Thread(target=server.serve_forever, daemon=True)
             self._thread.start()
             self.port = port
+            self.reset_count()   # 每次启动清零,只统计本次运行以来的请求
             return True, f"本地转发已开启: http://127.0.0.1:{port}"
 
     def stop(self):
@@ -368,4 +389,4 @@ class ProxyServer:
             server.server_close()
             self._thread.join(timeout=5)
             self.port = None
-            self.log("本地转发已停止")
+            # 停止日志由调用方(app层)统一记录为 sys 级别, 此处不重复输出

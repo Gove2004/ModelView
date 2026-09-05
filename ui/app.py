@@ -8,6 +8,7 @@
     无边框透明顶层窗, 可整体同步显示/隐藏(方位飞入飞出)。
   - 转发线程与探测线程通过 Qt Signal 回主线程更新 UI。
 """
+import re
 import threading
 import time
 
@@ -19,6 +20,7 @@ from PySide6.QtWidgets import (
 
 from core.config import Config
 from core.proxy import ProxyServer
+from core import autostart
 from . import theme
 from .panels import LeftPanel, RightPanel, TopSwitch, LogDock
 from .dialogs import ProviderDialog, MappingDialog, ConfirmDialog, SCALE_FROM
@@ -26,7 +28,7 @@ from .hotkey import GlobalHotkey
 
 # ---------------------------------------------------------------- 尺寸
 MARGIN = 14
-CAP_W, CAP_H = 220, 40          # 顶中胶囊: 映射 | 端口(启停) | 复制
+CAP_W, CAP_H = 300, 40          # 顶中胶囊: 映射 | 端口(启停) | 计数 | 复制
 LOG_W, LOG_H = 560, 160
 LEFT_W, RIGHT_W = 292, 330
 
@@ -82,21 +84,18 @@ class App(QObject):
         self.top.toggle_requested.connect(self._toggle_proxy)
         self.top.mapping_requested.connect(self._open_mapping)
         self.top.copy_requested.connect(self._copy_address)
+        self.top.count_requested.connect(self._clear_count)
 
         self.sig_log.connect(self.logdock.append)
         self.sig_probe.connect(self._on_probe_done)
         self._proxy = ProxyServer(cfg, self._proxy_log_cb)
 
-        # ---- 托盘 ----
+        # ---- 托盘(左键单击显隐, 右键动态菜单) ----
         self.tray = QSystemTrayIcon(self._make_icon(False), self)
         self.tray.setToolTip("ModelView · 代理未运行")
-        tray_menu = QMenu()
-        self._act_show = tray_menu.addAction("隐藏面板")
-        self._act_show.triggered.connect(self._toggle_visible)
-        tray_menu.addSeparator()
-        act_quit = tray_menu.addAction("退出")
-        act_quit.triggered.connect(self.request_quit)
-        self.tray.setContextMenu(tray_menu)
+        self._tray_menu = QMenu()
+        self._tray_menu.aboutToShow.connect(self._rebuild_tray_menu)
+        self.tray.setContextMenu(self._tray_menu)
         self.tray.activated.connect(self._on_tray_activated)
         if QSystemTrayIcon.isSystemTrayAvailable():
             self.tray.show()
@@ -115,16 +114,30 @@ class App(QObject):
         # ---- 启动 ----
         self._refresh_providers()
         self._sync_top()
+        self.top.set_count(0)
+        # 计数同步: 每秒从 proxy 读取请求次数并更新顶栏(开销可忽略)
+        self._count_timer = QTimer(self)
+        self._count_timer.timeout.connect(self._update_count)
+        self._count_timer.start(1000)
         if cfg.is_proxy_enabled():
             QTimer.singleShot(300, self._toggle_proxy)   # 恢复上次转发状态
         self._anim_to_targets(show=True)
         self._nlog("ModelView 已就绪 · Ctrl+Alt+M 显隐面板 · 顶栏: 映射 / "
-                   "端口(点按启停) / 复制地址")
+                   "端口(点按启停) / 计数(点击清零) / 复制地址", "sys")
 
     # ------------------------------------------------------------ 日志
     def _proxy_log_cb(self, msg):
         # http 线程回调: 只能发信号, 不能碰 UI
-        self.sig_log.emit("req", msg)
+        # 根据状态码细分请求级别: 2xx -> req_ok(绿点), 4xx/5xx -> req_err(红点)
+        level = "req"
+        m = re.search(r"\[(\d{3})\]", msg)
+        if m:
+            code = int(m.group(1))
+            if 200 <= code < 300:
+                level = "req_ok"
+            elif code >= 400:
+                level = "req_err"
+        self.sig_log.emit(level, msg)
 
     def _nlog(self, msg, level="ok"):
         self.sig_log.emit(level, msg)
@@ -254,15 +267,79 @@ class App(QObject):
 
     def _set_visible(self, show):
         self._visible = show
-        self._act_show.setText("隐藏面板" if show else "显示面板")
         if not show:
             # 面板隐藏时把当前打开的中心弹窗一并带走
             self._dlg_follow = self._visible_centers()
         self._anim_to_targets(show=show)
 
     def _on_tray_activated(self, reason):
-        if reason == QSystemTrayIcon.ActivationReason.DoubleClick:
+        # 左键单击显示/隐藏面板(Windows 上双击会先触发 Trigger, 故只处理 Trigger 避免连切两次)
+        if reason == QSystemTrayIcon.ActivationReason.Trigger:
             self._toggle_visible()
+
+    # ------------------------------------------------------------ 托盘动态菜单
+    def _rebuild_tray_menu(self):
+        """右键托盘时重建菜单, 保证代理状态 / 开机自启 / 映射列表实时准确。"""
+        m = self._tray_menu
+        m.clear()
+
+        # 1. 显示/隐藏面板
+        act_vis = m.addAction("隐藏面板" if self._visible else "显示面板")
+        act_vis.triggered.connect(self._toggle_visible)
+
+        # 2. 开启/关闭代理
+        act_proxy = m.addAction("关闭代理" if self._proxy.running else "开启代理")
+        act_proxy.triggered.connect(self._toggle_proxy)
+
+        # 3. 开机自启动(可勾选)
+        act_auto = m.addAction("开机自启动")
+        act_auto.setCheckable(True)
+        act_auto.setChecked(autostart.is_enabled())
+        act_auto.triggered.connect(self._toggle_autostart)
+
+        m.addSeparator()
+
+        # 4. 复制代理地址
+        act_copy = m.addAction("复制代理地址")
+        act_copy.triggered.connect(lambda: self._copy_address(self.cfg.get_port()))
+
+        # 5. 自定义映射子菜单
+        map_menu = m.addMenu("自定义映射")
+        bound = [m for m in self.cfg.get_mappings()
+                 if (m.get("alias") or "").strip()
+                 and (m.get("provider") or "").strip()
+                 and (m.get("model") or "").strip()]
+        if not bound:
+            empty = map_menu.addAction("(暂无已绑定映射)")
+            empty.setEnabled(False)
+        else:
+            for mp in bound:
+                alias = mp.get("alias", "")
+                prov = mp.get("provider", "")
+                model = mp.get("model", "")
+                act = map_menu.addAction(f"{alias}  →  {prov} / {model}")
+                act.setToolTip("点击复制模型别名到剪贴板")
+                act.triggered.connect(lambda _checked=False, a=alias: self._copy_mapping_alias(a))
+
+        m.addSeparator()
+
+        # 6. 退出
+        act_quit = m.addAction("退出")
+        act_quit.triggered.connect(self.request_quit)
+
+    def _toggle_autostart(self):
+        """切换开机自启动, 结果用托盘气泡提示。"""
+        ok, msg, enabled = autostart.toggle()
+        self._nlog(msg, "sys" if ok else "err")
+        if ok and QSystemTrayIcon.isSystemTrayAvailable():
+            self.tray.showMessage("ModelView", msg,
+                                  QSystemTrayIcon.MessageIcon.Information, 2000)
+
+    def _copy_mapping_alias(self, alias):
+        """托盘映射子菜单点击: 复制模型别名到剪贴板。"""
+        if alias:
+            QApplication.clipboard().setText(alias)
+            self._nlog(f"已复制模型别名: {alias}", "ok")
 
     # ------------------------------------------------------------ 提供商 CRUD
     def _refresh_providers(self):
@@ -325,10 +402,10 @@ class App(QObject):
             if old is not None:
                 self.right.remove_provider(old.get("name", ""))
             self.cfg.update_provider(self._dlg_edit_pid, name, url, key)
-            self._nlog(f"已更新提供商: {name}")
+            self._nlog(f"已更新提供商: {name}", "sys")
         else:
             self.cfg.add_provider(name, url, key)
-            self._nlog(f"已新增提供商: {name} ({url or '无 url'})")
+            self._nlog(f"已新增提供商: {name} ({url or '无 url'})", "sys")
         self.cfg.save()
         self._after_provider_change()
         dlg.hide()
@@ -368,16 +445,31 @@ class App(QObject):
         self._proxy.models_cache.invalidate()
         self.right.remove_provider(p.get("name", ""))
         self._refresh_providers()
-        self._nlog(f"已删除提供商: {p.get('name')}", "warn")
+        self._nlog(f"已删除提供商: {p.get('name')}", "sys")
 
     def _copy_model(self, label):
         QApplication.clipboard().setText(label)
         self._nlog(f"已复制模型名: {label}", "ok")
 
     def _copy_address(self, port):
-        addr = f"http://127.0.0.1:{port}"
+        addr = f"http://127.0.0.1:{port}/v1"
         QApplication.clipboard().setText(addr)
         self._nlog(f"已复制代理地址: {addr}", "ok")
+
+    # ------------------------------------------------------------ 请求计数
+    def _update_count(self):
+        """定时同步请求计数到顶栏(仅在计数变化时更新, 减少重绘)。"""
+        n = self._proxy.get_count()
+        if n != getattr(self, "_last_count", -1):
+            self._last_count = n
+            self.top.set_count(n)
+
+    def _clear_count(self):
+        """顶栏点击计数按钮: 清零请求计数。"""
+        self._proxy.reset_count()
+        self._last_count = 0
+        self.top.set_count(0)
+        self._nlog("已清零请求计数", "sys")
 
     # ------------------------------------------------------------ 模型位映射
     def _models_by_provider(self):
@@ -424,9 +516,9 @@ class App(QObject):
         named = len([r for r in rows if (r.get("alias") or "").strip()])
         msg = f"已保存 {named} 条映射(其中 {bound} 个已绑定)"
         if bound < named:
-            self._nlog(msg + f" · {named - bound} 个空位绑定后才能转发", "warn")
+            self._nlog(msg + f" · {named - bound} 个空位绑定后才能转发", "sys")
         else:
-            self._nlog(msg, "ok")
+            self._nlog(msg, "sys")
 
     # ------------------------------------------------------------ 探测
     def _do_probe(self):
@@ -467,9 +559,10 @@ class App(QObject):
             self._proxy.stop()
             self.cfg.set_proxy_enabled(False)
             self.cfg.save()
+            self._nlog("本地转发已停止", "sys")
         else:
             ok, msg = self._proxy.start(self.cfg.get_port())
-            self._nlog(msg, "ok" if ok else "err")
+            self._nlog(msg, "sys" if ok else "err")
             if not ok:
                 self._sync_top()
                 return

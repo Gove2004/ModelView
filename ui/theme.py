@@ -32,6 +32,13 @@ RED = "#f06b68"           # 错误
 RED_DIM = "#b04542"
 AMBER = "#e8bd63"         # 警告
 BLUE = "#74abf8"          # 信息 / 链接 / 焦点
+PURPLE = "#b8a4e8"        # 系统事件(启动/启停/配置变更)
+
+# ---------- 派生色(hover / 选中 / 强调按钮文字) ----------
+ACCENT_HOVER = "#37a878"  # accent 按钮 hover
+DANGER_HOVER = "#c05552"  # danger 按钮 hover
+SELECTION_BG = "#33507a"  # 列表/下拉选中项背景
+TEXT_ON_ACCENT = "#ffffff"  # 强调按钮上的文字色
 
 FONT_FAMILY = "'Segoe UI', 'Microsoft YaHei UI', 'Microsoft YaHei'"
 
@@ -92,10 +99,10 @@ QPushButton:disabled {{
 QPushButton#accent {{
     background: {GREEN_DIM};
     border-color: {GREEN_DIM};
-    color: #ffffff;
+    color: {TEXT_ON_ACCENT};
 }}
 QPushButton#accent:hover {{
-    background: #37a878;
+    background: {ACCENT_HOVER};
 }}
 QPushButton#ghost {{
     background: transparent;
@@ -123,29 +130,29 @@ QPushButton#cardAct:hover {{
 }}
 QPushButton#cardDanger:hover {{
     background: {RED_DIM};
-    color: #ffffff;
+    color: {TEXT_ON_ACCENT};
 }}
 /* 映射弹窗: 行内删除钮(文字) */
 QPushButton#rowDel {{
     background: transparent;
     border: none;
     color: {TEXT_FAINT};
-    font-size: 11px;
+    font-size: {FS_ACTION}px;
     padding: 3px 0;
     border-radius: 5px;
 }}
 QPushButton#rowDel:hover {{
     background: {RED_DIM};
-    color: #ffffff;
+    color: {TEXT_ON_ACCENT};
 }}
 /* 危险主按钮(确认删除) */
 QPushButton#danger {{
     background: {RED_DIM};
     border: 1px solid {RED_DIM};
-    color: #ffffff;
+    color: {TEXT_ON_ACCENT};
 }}
 QPushButton#danger:hover {{
-    background: #c05552;
+    background: {DANGER_HOVER};
 }}
 /* 输入框 */
 QLineEdit {{
@@ -215,7 +222,7 @@ QComboBox QAbstractItemView {{
     border-radius: 7px;
     padding: 4px;
     color: {TEXT};
-    selection-background-color: #33507a;
+    selection-background-color: {SELECTION_BG};
     selection-color: {TEXT};
     outline: none;
 }}
@@ -238,7 +245,7 @@ QTreeWidget::item:hover {{
     background: {BG_CARD};
 }}
 QTreeWidget::item:selected {{
-    background: #33507a;
+    background: {SELECTION_BG};
     color: {TEXT};
 }}
 QTreeWidget::branch {{
@@ -290,7 +297,7 @@ QMenu::item {{
     border-radius: 5px;
 }}
 QMenu::item:selected {{
-    background: #33507a;
+    background: {SELECTION_BG};
 }}
 QMenu::separator {{
     height: 1px;

@@ -41,21 +41,21 @@ def main():
         return
 
     from core.config import Config
-    from ui.theme import qss
+    from ui import theme
 
     app = QApplication(sys.argv)
     app.setApplicationName("ModelView")
     app.setApplicationDisplayName("ModelView · 模型视图")
     app.setStyle("Fusion")
-    app.setStyleSheet(qss())
+    app.setStyleSheet(theme.qss())
 
-    # Fusion 深色基调兜底
+    # Fusion 深色基调兜底(颜色统一引用 theme 常量)
     from PySide6.QtGui import QPalette, QColor
     pal = QPalette()
-    pal.setColor(QPalette.ColorRole.Window, QColor("#1a1e28"))
-    pal.setColor(QPalette.ColorRole.WindowText, QColor("#dce2ee"))
-    pal.setColor(QPalette.ColorRole.Base, QColor("#1a1e28"))
-    pal.setColor(QPalette.ColorRole.Text, QColor("#dce2ee"))
+    pal.setColor(QPalette.ColorRole.Window, QColor(theme.BG_SUNKEN))
+    pal.setColor(QPalette.ColorRole.WindowText, QColor(theme.TEXT))
+    pal.setColor(QPalette.ColorRole.Base, QColor(theme.BG_SUNKEN))
+    pal.setColor(QPalette.ColorRole.Text, QColor(theme.TEXT))
     app.setPalette(pal)
 
     try:

@@ -14,7 +14,7 @@
     connect 到 lambda 时必须显式吞掉该参数, 否则形参被顶替(见 ProviderCard)。
 """
 import time
-from PySide6.QtCore import Qt, Signal, QSize, QPropertyAnimation, QRectF, QPoint, QRect, QEasingCurve
+from PySide6.QtCore import Qt, Signal, QSize, QPropertyAnimation, QRectF, QPoint, QRect, QEasingCurve, QTimer
 from PySide6.QtGui import (QFontMetrics, QColor, QPainterPath, QRegion, QIcon,
                            QPixmap, QPainter, QFont, QPolygon)
 from PySide6.QtWidgets import (
@@ -474,17 +474,19 @@ class RightPanel(FloatingWindow):
 # ---------------------------------------------------------------- 顶中: 代理开关
 
 class TopSwitch(FloatingWindow):
-    """顶部中央胶囊: 映射 | 端口(启停) | 复制。
+    """顶部中央胶囊: 映射 | 端口(启停) | 请求计数(点击清零) | 复制。
 
-    三段独立点击区(路由开关与映射本就是一体, 入口直接做在一起):
+    四段独立点击区:
       - 「映射」: 打开自定义映射弹窗
       - 「端口」: 点击启停本地代理, 数字颜色 灰=停 / 绿=运行
-      - 「复制」: 复制 http://127.0.0.1:<port> 进剪贴板
+      - 「计数」: 显示本次运行以来的请求次数, 点击清零
+      - 「复制」: 复制 http://127.0.0.1:<port>/v1 进剪贴板
     """
 
     toggle_requested = Signal()
     mapping_requested = Signal()
     copy_requested = Signal(str)     # 当前端口
+    count_requested = Signal()       # 点击计数按钮 -> 清零
 
     def __init__(self, w, h):
         super().__init__(w, h)
@@ -492,7 +494,7 @@ class TopSwitch(FloatingWindow):
         inner.setStyleSheet(
             f"QFrame {{ background: {theme.BG_CARD}; border: 1px solid {theme.BORDER_STRONG};"
             f" border-radius: 14px; }}")
-        # 三段均分整条胶囊: 每个按钮 stretch=1, 文字各自水平居中
+        # 四段均分整条胶囊: 每个按钮 stretch=1, 文字各自水平居中
         row = _hbox((8, 0, 8, 0), spacing=0, parent=inner)
 
         self._btn_map = ghost_button("映射", "打开自定义映射窗口")
@@ -505,6 +507,12 @@ class TopSwitch(FloatingWindow):
         self._btn_port = ghost_button("10901", "点击启动本地转发代理")
         self._btn_port.clicked.connect(self.toggle_requested)
         row.addWidget(self._btn_port, 1)
+
+        row.addWidget(self._vsep(inner))
+
+        self._btn_count = ghost_button("0", "本次运行以来的请求次数, 点击清零")
+        self._btn_count.clicked.connect(self.count_requested)
+        row.addWidget(self._btn_count, 1)
 
         row.addWidget(self._vsep(inner))
 
@@ -537,6 +545,14 @@ class TopSwitch(FloatingWindow):
         self._btn_port.setToolTip(
             "点击停止本地转发代理" if running else "点击启动本地转发代理")
 
+    def set_count(self, count):
+        """更新请求计数显示。0 时用弱色, 有值时用主文本色。"""
+        n = int(count or 0)
+        self._btn_count.setText(str(n))
+        color = theme.TEXT if n > 0 else theme.TEXT_FAINT
+        self._btn_count.setStyleSheet(
+            f"color: {color}; font-size: {theme.FS_BASE}px; font-weight: 600;")
+
 
 # ---------------------------------------------------------------- 底部: toast 日志
 
@@ -545,16 +561,36 @@ LEVEL_COLORS = {
     "err": theme.RED,
     "warn": theme.AMBER,
     "req": theme.TEXT_FAINT,
+    "req_ok": theme.GREEN,       # 请求成功(2xx)
+    "req_err": theme.RED,        # 请求失败(4xx/5xx)
     "info": theme.BLUE,
+    "sys": theme.PURPLE,         # 系统事件(启动/启停/配置变更)
+}
+
+# 过滤级别 -> 匹配的 level 集合
+FILTER_SETS = {
+    "all": None,    # None = 不过滤, 全部显示
+    "req": {"req", "req_ok", "req_err"},
+    "err": {"err", "req_err"},
+    "warn": {"warn"},
+    "sys": {"sys"},
 }
 
 
 class ToastRow(QFrame):
-    """一条日志: 色点 + 时间 + 文本, 渐显进场。行高紧凑, 一页多显几条。"""
+    """一条日志: 色点 + 时间 + 文本, 渐显进场。行高紧凑, 一页多显几条。
+
+    点击整行复制日志文本到剪贴板。
+    """
+
+    clicked = Signal()
 
     def __init__(self, level, text, width):
         super().__init__()
+        self._level = level
+        self._text = text
         self.setFixedHeight(22)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
         self.setStyleSheet(
             f"ToastRow {{ background: transparent; border-radius: 6px; }}"
             f"ToastRow:hover {{ background: {theme.BG_CARD}; }}")
@@ -567,14 +603,26 @@ class ToastRow(QFrame):
         row.addWidget(ts)
         msg = QLabel()
         fm = QFontMetrics(msg.font())
-        msg.setText(fm.elidedText(text, Qt.TextElideMode.ElideRight,
+        # URL 类长文本用 ElideMiddle, 保留开头协议和结尾路径
+        msg.setText(fm.elidedText(text, Qt.TextElideMode.ElideMiddle,
                                   max(60, width - 150)))
         msg.setToolTip(text)
-        c = theme.TEXT if level in ("info", "req") else LEVEL_COLORS.get(level, theme.TEXT)
+        c = theme.TEXT if level in ("info", "req", "sys") else LEVEL_COLORS.get(level, theme.TEXT)
         msg.setStyleSheet(
             f"color: {c}; background: transparent; border: none;"
             f"font-size: {theme.FS_LOG_TEXT}px;")
         row.addWidget(msg, 1)
+
+    def level(self):
+        return self._level
+
+    def text(self):
+        return self._text
+
+    def mousePressEvent(self, e):
+        if e.button() == Qt.MouseButton.LeftButton:
+            self.clicked.emit()
+        super().mousePressEvent(e)
 
     def fade_in(self, ms=200):
         eff = QGraphicsOpacityEffect(self)
@@ -592,6 +640,9 @@ class LogDock(FloatingWindow):
 
     支持展开 / 折叠两种高度(默认折叠, 只留标题行), 切换带平滑
     过渡动画, 窗口始终底边贴屏(折叠时顶部向下收, 展开时向上长)。
+
+    标题行带级别过滤按钮(全部 / 请求 / 错误 / 警告), 点击即过滤;
+    点击单条日志复制全文到剪贴板。
     """
 
     MAX_ROWS = 200
@@ -603,12 +654,29 @@ class LogDock(FloatingWindow):
         self._exp_h = int(h)                 # 展开态高度(调用方传入 LOG_H)
         self._expanded = False
         self._expand_anim = None
+        self._filter_level = "all"
+
+        # ---- 级别过滤按钮(标题行中部) ----
+        self._filter_buttons = {}
+        for key, label in (("all", "全部"), ("req", "请求"),
+                            ("err", "错误"), ("warn", "警告"), ("sys", "系统")):
+            b = ghost_button(label, f"只显示{label}日志" if key != "all" else "显示全部日志")
+            b.clicked.connect(lambda _checked=False, k=key: self._set_filter(k))
+            self._filter_buttons[key] = b
 
         self._btn_toggle = ghost_button("展开", "展开 / 折叠日志面板")
         self._btn_toggle.clicked.connect(self._on_toggle)
         btn = ghost_button("清空", "清空日志")
         btn.clicked.connect(self.clear)
-        self.header("日志", self._btn_toggle, btn)
+        self.header("日志",
+                    self._filter_buttons["all"],
+                    self._filter_buttons["req"],
+                    self._filter_buttons["err"],
+                    self._filter_buttons["warn"],
+                    self._filter_buttons["sys"],
+                    self._btn_toggle, btn)
+        self._update_filter_style()
+
         self._list = QListWidget(self.panel)
         self._list.setSpacing(1)
         self._list.setUniformItemSizes(True)
@@ -681,10 +749,14 @@ class LogDock(FloatingWindow):
     # ---- 内容 ----
     def append(self, level, text):
         row = ToastRow(level, text, self.width())
+        row.clicked.connect(lambda r=row: self._copy_row(r))
         item = QListWidgetItem()
         item.setSizeHint(QSize(0, 22))
+        item.setData(USER_ROLE, level)    # 保存级别供过滤
         self._list.addItem(item)
         self._list.setItemWidget(item, row)
+        # 按当前过滤级别决定可见性
+        item.setHidden(not self._level_visible(level))
         row.fade_in()
         while self._list.count() > self.MAX_ROWS:
             it = self._list.takeItem(0)
@@ -692,6 +764,57 @@ class LogDock(FloatingWindow):
             if wid is not None:
                 wid.deleteLater()
         self._list.scrollToBottom()
+
+    def _level_visible(self, level):
+        """判断某级别日志在当前过滤下是否可见。"""
+        if self._filter_level == "all":
+            return True
+        return level in (FILTER_SETS.get(self._filter_level) or set())
+
+    def _set_filter(self, level):
+        """切换过滤级别并刷新列表。"""
+        if level == self._filter_level:
+            return
+        self._filter_level = level
+        self._update_filter_style()
+        self._apply_filter()
+
+    def _apply_filter(self):
+        """遍历所有条目, 按当前过滤级别显示/隐藏。"""
+        for i in range(self._list.count()):
+            it = self._list.item(i)
+            lvl = it.data(USER_ROLE) or "req"
+            it.setHidden(not self._level_visible(lvl))
+
+    def _update_filter_style(self):
+        """更新过滤按钮的选中/未选中样式。"""
+        for key, b in self._filter_buttons.items():
+            if key == self._filter_level:
+                b.setStyleSheet(
+                    f"color: {theme.TEXT}; background: {theme.BG_CARD};"
+                    f"border: 1px solid {theme.BORDER_STRONG}; border-radius: 5px;"
+                    f"padding: 2px 8px; font-size: {theme.FS_PILL}px;")
+            else:
+                b.setStyleSheet(
+                    f"color: {theme.TEXT_FAINT}; background: transparent; border: none;"
+                    f"padding: 2px 8px; font-size: {theme.FS_PILL}px;")
+
+    def _copy_row(self, row):
+        """点击日志行: 复制全文到剪贴板并在标题行短暂提示。"""
+        text = row.text()
+        if text:
+            QApplication.clipboard().setText(text)
+            # 用标题行文字临时提示复制成功, 1.5 秒后恢复
+            original = self._title_lab.text()
+            self._title_lab.setText("已复制日志")
+            self._title_lab.setStyleSheet(
+                f"color: {theme.GREEN}; font-size: {theme.FS_PANEL_TITLE}px; font-weight: 600;")
+            QTimer.singleShot(1500, lambda: (
+                self._title_lab.setText(original),
+                self._title_lab.setStyleSheet(
+                    f"color: {theme.TEXT_DIM}; font-size: {theme.FS_PANEL_TITLE}px;"
+                    f"font-weight: 600; letter-spacing: 1px;")
+            ))
 
     def clear(self):
         self._list.clear()

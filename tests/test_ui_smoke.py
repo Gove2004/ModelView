@@ -42,13 +42,15 @@ def main():
     check("左翼位于屏幕左缘 x=0", a.left.pos().x() == 0)
     check("右翼贴右缘", a.right.pos().x() + a.right.width() == a._geo.width())
     check("日志条贴底部", a.logdock.pos().y() + a.logdock.height() >= a._geo.height() - 14)
-    check("顶开关为 映射|端口|复制 三段", not hasattr(a.top, "_label")
+    check("顶开关为 映射|端口|计数|复制 四段", not hasattr(a.top, "_label")
           and a.top._btn_map.text() == "映射" and a.top._btn_copy.text() == "复制"
-          and a.top._btn_port.text() == "10901")
-    bw = (a.top._btn_map.width(), a.top._btn_port.width(), a.top._btn_copy.width())
-    check("胶囊三段等宽均分", max(bw) - min(bw) <= 1, str(bw))
-    pxc = a.top._btn_port.mapTo(a.top, a.top._btn_port.rect().center()).x()
-    check("中段端口钮位于胶囊正中", abs(pxc - a.top.width() // 2) <= 2, f"port_center_x={pxc}")
+          and a.top._btn_port.text() == "10901" and a.top._btn_count.text() == "0")
+    bw = (a.top._btn_map.width(), a.top._btn_port.width(),
+          a.top._btn_count.width(), a.top._btn_copy.width())
+    check("胶囊四段等宽均分", max(bw) - min(bw) <= 1, str(bw))
+    check("计数按钮位于端口与复制之间",
+          a.top._btn_port.pos().x() < a.top._btn_count.pos().x()
+          and a.top._btn_count.pos().x() < a.top._btn_copy.pos().x())
 
     # 日志分级渲染
     for lvl in ("ok", "err", "warn", "req", "info"):
@@ -163,7 +165,7 @@ def main():
     QApplication.clipboard().setText("")
     a.top._btn_copy.click()
     app.processEvents()
-    check("点[复制]复制代理地址", QApplication.clipboard().text() == "http://127.0.0.1:10901")
+    check("点[复制]复制代理地址", QApplication.clipboard().text() == "http://127.0.0.1:10901/v1")
     a._on_dialog_saved("ds", "https://api.deepseek.com/v1", "sk-test")
     app.processEvents()
     a._open_mapping()

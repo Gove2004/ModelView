@@ -229,7 +229,7 @@ class ProviderDialog(QDialog, CenterMixin):
     def _field(lay, label_text):
         lab = QLabel(label_text)
         lab.setStyleSheet(
-            f"color: {theme.TEXT_FAINT}; font-size: 11px; background: transparent; border: none;")
+            f"color: {theme.TEXT_FAINT}; font-size: {theme.FS_FIELD_LABEL}px; background: transparent; border: none;")
         lab.setContentsMargins(2, 0, 0, 0)
         lay.addWidget(lab)
         ed = QLineEdit()
@@ -414,7 +414,7 @@ class MappingDialog(QDialog, CenterMixin):
             lab = QLabel(text)
             lab.setFixedWidth(w)
             lab.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            lab.setStyleSheet(f"color: {theme.TEXT_FAINT}; font-size: 11px;"
+            lab.setStyleSheet(f"color: {theme.TEXT_FAINT}; font-size: {theme.FS_FIELD_LABEL}px;"
                               f"background: transparent; border: none;")
             head.addWidget(lab)
         head.addStretch(1)
