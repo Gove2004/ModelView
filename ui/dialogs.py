@@ -12,6 +12,7 @@ from PySide6.QtWidgets import (
 )
 
 from . import theme
+from .panels import _IconButton, _plus_icon, _trash_icon
 
 W = 380
 
@@ -273,7 +274,7 @@ class MappingRow(QFrame):
 
     remove_requested = Signal(object)      # 传出自身, 便于直接移除
 
-    W_ALIAS, W_PROV, W_MODEL, W_DEL = 150, 108, 160, 46
+    W_ALIAS, W_PROV, W_MODEL, W_DEL = 150, 108, 160, 30
     NO_SEL = "未选择"
     NO_PROV = "未绑定"
 
@@ -307,12 +308,8 @@ class MappingRow(QFrame):
         self._model.setFixedWidth(self.W_MODEL)
         lay.addWidget(self._model)
 
-        self._del = QPushButton("删除")
-        self._del.setObjectName("rowDel")
-        self._del.setFixedWidth(self.W_DEL)
-        self._del.setCursor(Qt.CursorShape.PointingHandCursor)
-        self._del.setToolTip("删除该映射")
-        # clicked(checked) 会顶替 lambda 形参 → 外层吞掉
+        self._del = _IconButton(_trash_icon, "删除该映射", size=24, icon_size=14,
+                                 normal_color=theme.RED_DIM, hover_color=theme.RED)
         self._del.clicked.connect(
             lambda _checked=False, s=self: s.remove_requested.emit(s))
         lay.addWidget(self._del)
@@ -443,11 +440,7 @@ class MappingDialog(QDialog, CenterMixin):
 
         row = QHBoxLayout()
         row.setSpacing(8)
-        btn_add = QPushButton("新增")
-        btn_add.setObjectName("ghost")
-        btn_add.setFlat(True)
-        btn_add.setCursor(Qt.CursorShape.PointingHandCursor)
-        btn_add.clicked.connect(lambda _checked=False: self._add_row())
+        btn_add = _IconButton(_plus_icon, "新增映射", clicked=self._add_row, outlined=True)
         row.addWidget(btn_add)
         row.addStretch(1)
         cancel = QPushButton("关闭")

@@ -14,13 +14,13 @@
     connect 到 lambda 时必须显式吞掉该参数, 否则形参被顶替(见 ProviderCard)。
 """
 import time
-from PySide6.QtCore import Qt, Signal, QSize, QPropertyAnimation, QRectF, QPoint, QRect, QEasingCurve, QTimer
+from PySide6.QtCore import Qt, Signal, QSize, QPropertyAnimation, QRectF, QPoint, QRect, QEasingCurve, QTimer, QObject
 from PySide6.QtGui import (QFontMetrics, QColor, QPainterPath, QRegion, QIcon,
-                           QPixmap, QPainter, QFont, QPolygon)
+                           QPixmap, QPainter, QFont, QPolygon, QPen)
 from PySide6.QtWidgets import (
     QWidget, QFrame, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QScrollArea, QTreeWidget, QTreeWidgetItem, QListWidget,
-    QListWidgetItem, QGraphicsOpacityEffect, QLineEdit,
+    QListWidgetItem, QGraphicsOpacityEffect, QLineEdit, QSizePolicy,
 )
 
 from . import theme
@@ -112,7 +112,7 @@ class FloatingWindow(QWidget):
         self.setFixedSize(w, h)
         # 圆角区域之外的透明像素不接收鼠标(不挡桌面点击)
         path = QPainterPath()
-        path.addRoundedRect(QRectF(0.5, 0.5, w - 1, h - 1), 10, 10)
+        path.addRoundedRect(QRectF(0.5, 0.5, w - 1, h - 1), 12, 12)
         self.setMask(QRegion(path.toFillPolygon().toPolygon()))
         self.panel = QFrame(self)
         self.panel.setObjectName("panel")
@@ -122,6 +122,11 @@ class FloatingWindow(QWidget):
 
     def body(self):
         return self._body
+
+    def resizeEvent(self, e):
+        """窗口大小变化时(如日志 dock 展开/折叠), panel 同步铺满, 避免内容被裁剪。"""
+        super().resizeEvent(e)
+        self.panel.setGeometry(0, 0, self.width(), self.height())
 
     def header(self, title, *trailing):
         """标题行: PanelTitle + spacer + 若干尾部件。返回尾部件列表便于连信号。
@@ -175,7 +180,8 @@ class ProviderCard(QFrame):
             f"color: {theme.TEXT}; font-size: {theme.FS_CARD_NAME}px; font-weight: 600;"
             f"background: transparent; border: none;")
         r1.addWidget(nm, 1)
-        r1.addWidget(self._act_btn("修改", on_edit, "cardAct", "修改提供商"))
+        r1.addWidget(_IconButton(_edit_icon, "修改提供商", size=22, icon_size=13,
+                                  clicked=on_edit))
         lay.addLayout(r1)
 
         # 行2: url(elide) … 删除
@@ -191,7 +197,9 @@ class ProviderCard(QFrame):
             f"color: {theme.TEXT_FAINT}; font-size: {theme.FS_META}px;"
             f"background: transparent; border: none;")
         r2.addWidget(url, 1)
-        r2.addWidget(self._act_btn("删除", on_delete, "cardDanger", "删除提供商(需确认)"))
+        r2.addWidget(_IconButton(_trash_icon, "删除提供商(需确认)", size=22, icon_size=13,
+                                  clicked=on_delete,
+                                  normal_color=theme.RED_DIM, hover_color=theme.RED))
         lay.addLayout(r2)
 
     @staticmethod
@@ -222,8 +230,7 @@ class LeftPanel(FloatingWindow):
 
     def __init__(self, w, h):
         super().__init__(w, h)
-        btn_add = ghost_button("添加", "新增提供商")
-        btn_add.clicked.connect(self.add_requested)
+        btn_add = _IconButton(_plus_icon, "新增提供商", clicked=self.add_requested.emit)
         self.header("提供商", btn_add)
 
         self._search = search_box("筛选提供商…")
@@ -317,6 +324,293 @@ def _arrow_icon(open_state, color=theme.TEXT_DIM):
     return QIcon(pm)
 
 
+def _refresh_icon(color=theme.TEXT_FAINT):
+    """自绘 14x14 刷新图标(圆形箭头), 避免 Unicode 字符在某些字体下不显示。"""
+    pm = QPixmap(14, 14)
+    pm.fill(Qt.GlobalColor.transparent)
+    p = QPainter(pm)
+    p.setRenderHint(QPainter.RenderHint.Antialiasing)
+    pen = QPen(QColor(color))
+    pen.setWidth(2)
+    pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+    p.setPen(pen)
+    # 270 度圆弧(从 45 度起, 逆时针扫 270 度到 315 度)
+    p.drawArc(2, 2, 10, 10, 45 * 16, -270 * 16)
+    # 弧末端箭头三角形(右上角)
+    p.setPen(Qt.PenStyle.NoPen)
+    p.setBrush(QColor(color))
+    p.drawPolygon(QPolygon([QPoint(10, 1), QPoint(13, 4), QPoint(9, 5)]))
+    p.end()
+    return QIcon(pm)
+
+
+def _icon_pixmap():
+    """14x14 透明画布, 供各图标函数使用。"""
+    pm = QPixmap(14, 14)
+    pm.fill(Qt.GlobalColor.transparent)
+    return pm
+
+
+def _icon_painter(pm, color, width=1.5):
+    """创建带抗锯齿和指定颜色/线宽的 QPainter。"""
+    p = QPainter(pm)
+    p.setRenderHint(QPainter.RenderHint.Antialiasing)
+    pen = QPen(QColor(color))
+    pen.setWidthF(width)
+    pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+    pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
+    p.setPen(pen)
+    p.setBrush(Qt.BrushStyle.NoBrush)
+    return p
+
+
+def _plus_icon(color=theme.TEXT_FAINT):
+    """添加: 加号。"""
+    pm = _icon_pixmap()
+    p = _icon_painter(pm, color, 1.8)
+    p.drawLine(7, 3, 7, 11)
+    p.drawLine(3, 7, 11, 7)
+    p.end()
+    return QIcon(pm)
+
+
+def _edit_icon(color=theme.TEXT_FAINT):
+    """修改: 铅笔。"""
+    pm = _icon_pixmap()
+    p = _icon_painter(pm, color, 1.5)
+    # 铅笔身(斜放)
+    p.drawPolygon(QPolygon([QPoint(3, 11), QPoint(4, 8), QPoint(10, 2), QPoint(12, 4), QPoint(6, 10)]))
+    # 笔尖
+    p.drawLine(3, 11, 4, 8)
+    p.end()
+    return QIcon(pm)
+
+
+def _trash_icon(color=theme.TEXT_FAINT):
+    """删除: 垃圾桶。"""
+    pm = _icon_pixmap()
+    p = _icon_painter(pm, color, 1.5)
+    # 桶盖
+    p.drawLine(2, 4, 12, 4)
+    p.drawLine(5, 2, 9, 2)
+    p.drawLine(5, 2, 5, 4)
+    p.drawLine(9, 2, 9, 4)
+    # 桶身
+    p.drawLine(4, 4, 5, 12)
+    p.drawLine(10, 4, 9, 12)
+    p.drawLine(5, 12, 9, 12)
+    # 桶身竖线
+    p.drawLine(7, 6, 7, 10)
+    p.end()
+    return QIcon(pm)
+
+
+def _expand_icon(color=theme.TEXT_FAINT):
+    """展开: 向下箭头。"""
+    pm = _icon_pixmap()
+    p = _icon_painter(pm, color, 1.8)
+    p.drawLine(3, 4, 11, 4)
+    p.drawLine(3, 4, 7, 9)
+    p.drawLine(11, 4, 7, 9)
+    p.end()
+    return QIcon(pm)
+
+
+def _collapse_icon(color=theme.TEXT_FAINT):
+    """收起: 向上箭头。"""
+    pm = _icon_pixmap()
+    p = _icon_painter(pm, color, 1.8)
+    p.drawLine(3, 10, 11, 10)
+    p.drawLine(3, 10, 7, 5)
+    p.drawLine(11, 10, 7, 5)
+    p.end()
+    return QIcon(pm)
+
+
+def _clear_icon(color=theme.TEXT_FAINT):
+    """清空: X。"""
+    pm = _icon_pixmap()
+    p = _icon_painter(pm, color, 1.8)
+    p.drawLine(4, 4, 10, 10)
+    p.drawLine(10, 4, 4, 10)
+    p.end()
+    return QIcon(pm)
+
+
+def _copy_icon(color=theme.TEXT_FAINT):
+    """复制: 两个重叠矩形。"""
+    pm = _icon_pixmap()
+    p = _icon_painter(pm, color, 1.5)
+    # 后层矩形
+    p.drawRect(5, 5, 7, 7)
+    # 前层矩形
+    p.drawRect(2, 2, 7, 7)
+    p.end()
+    return QIcon(pm)
+
+
+def _settings_icon(color=theme.TEXT_FAINT):
+    """设置: 齿轮。"""
+    pm = _icon_pixmap()
+    p = _icon_painter(pm, color, 1.5)
+    # 中心圆
+    p.drawEllipse(5, 5, 4, 4)
+    # 齿轮齿(8个方向短线)
+    for angle in range(0, 360, 45):
+        import math
+        rad = math.radians(angle)
+        x1 = 7 + 4 * math.cos(rad)
+        y1 = 7 + 4 * math.sin(rad)
+        x2 = 7 + 6 * math.cos(rad)
+        y2 = 7 + 6 * math.sin(rad)
+        p.drawLine(int(x1), int(y1), int(x2), int(y2))
+    p.end()
+    return QIcon(pm)
+
+
+class _RowClickFilter(QObject):
+    """事件过滤器: 安装到箭头/文字标签上, 点击时发出 clicked 信号。
+
+    用事件过滤器而非重写父 widget mousePressEvent, 避免刷新按钮点击
+    事件冒泡导致同时触发刷新和展开。
+    """
+
+    clicked = Signal()
+
+    def eventFilter(self, obj, event):
+        if event.type() == event.Type.MouseButtonPress:
+            if event.button() == Qt.MouseButton.LeftButton:
+                self.clicked.emit()
+                return True
+        return super().eventFilter(obj, event)
+
+
+class _IconButton(QPushButton):
+    """通用图标按钮: 自绘简约图标, hover 时图标+背景变亮。
+
+    用法: _IconButton(_plus_icon, "添加提供商", clicked=callback)
+    """
+
+    def __init__(self, icon_fn, tooltip="", size=24, icon_size=14,
+                 clicked=None, normal_color=None, hover_color=None,
+                 outlined=False, parent=None):
+        super().__init__(parent)
+        self._icon_fn = icon_fn
+        self._normal_color = normal_color or theme.TEXT_FAINT
+        self._hover_color = hover_color or theme.TEXT
+        self.setFixedSize(size, size)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        if tooltip:
+            self.setToolTip(tooltip)
+        self.setIcon(icon_fn(self._normal_color))
+        self.setIconSize(QSize(icon_size, icon_size))
+        if outlined:
+            self.setStyleSheet(
+                f"QPushButton {{ background: transparent; border: 1px solid {theme.BORDER_STRONG};"
+                f" border-radius: 5px; }}"
+                f"QPushButton:hover {{ background: {theme.BG_CARD}; border-color: {theme.TEXT_DIM}; }}")
+        else:
+            self.setStyleSheet(
+                f"QPushButton {{ background: transparent; border: none; border-radius: 5px; }}"
+                f"QPushButton:hover {{ background: {theme.BG_CARD}; }}")
+        if clicked is not None:
+            # QPushButton.clicked 带 checked 参数, 外层 lambda 吞掉再调无参回调
+            self.clicked.connect(lambda _checked=False, c=clicked: c())
+
+    def enterEvent(self, e):
+        self.setIcon(self._icon_fn(self._hover_color))
+        super().enterEvent(e)
+
+    def leaveEvent(self, e):
+        self.setIcon(self._icon_fn(self._normal_color))
+        super().leaveEvent(e)
+
+    def set_icon_fn(self, icon_fn):
+        """动态切换图标函数(如展开<->收起)。"""
+        self._icon_fn = icon_fn
+        self.setIcon(icon_fn(self._hover_color if self.underMouse() else self._normal_color))
+
+
+class _RefreshButton(QPushButton):
+    """单个提供商刷新按钮: 自绘圆形箭头图标, hover 时图标+背景变亮。"""
+
+    def __init__(self, name, parent=None):
+        super().__init__(parent)
+        self._name = name
+        self.setFixedSize(24, 24)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.setToolTip(f"刷新「{name}」的模型列表")
+        self.setIcon(_refresh_icon(theme.TEXT_FAINT))
+        self.setIconSize(QSize(14, 14))
+        self.setStyleSheet(
+            f"QPushButton {{ background: transparent; border: none; border-radius: 5px; }}"
+            f"QPushButton:hover {{ background: {theme.BG_CARD}; }}")
+
+    def enterEvent(self, e):
+        self.setIcon(_refresh_icon(theme.TEXT))
+        super().enterEvent(e)
+
+    def leaveEvent(self, e):
+        self.setIcon(_refresh_icon(theme.TEXT_FAINT))
+        super().leaveEvent(e)
+
+
+class ProviderRootWidget(QFrame):
+    """提供商根节点的自绘行: 箭头 + 名称 + 刷新按钮。
+
+    用自定义 widget 替代 QTreeWidgetItem 的原生文字, 以便在右侧放置
+    单个刷新按钮。点击箭头或文字触发展开/收起, 点击 ↻ 按钮只刷新。
+    """
+
+    clicked = Signal()            # 点击箭头/文字 -> 展开/收起
+    refresh_clicked = Signal(str)  # 点击刷新按钮 -> 传提供商 name
+
+    def __init__(self, name, label, color, parent=None):
+        super().__init__(parent)
+        self._name = name
+        self.setMinimumHeight(28)
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        self.setStyleSheet("ProviderRootWidget { background: transparent; border: none; }")
+        lay = QHBoxLayout(self)
+        lay.setContentsMargins(0, 0, 4, 0)
+        lay.setSpacing(6)
+
+        self._arrow = QLabel()
+        self._arrow.setFixedWidth(16)
+        self._arrow.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._arrow.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._arrow.setStyleSheet("background: transparent; border: none;")
+        self._arrow.setPixmap(_arrow_icon(False, theme.TEXT_FAINT).pixmap(12, 12))
+        lay.addWidget(self._arrow)
+
+        self._label = QLabel(label)
+        self._label.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._label.setStyleSheet(
+            f"color: {color}; font-weight: 600; background: transparent; border: none;"
+            f" font-size: {theme.FS_TREE_ROOT}px;")
+        lay.addWidget(self._label, 1)
+
+        self._btn = _RefreshButton(name)
+        self._btn.clicked.connect(
+            lambda _checked=False, n=name: self.refresh_clicked.emit(n))
+        lay.addWidget(self._btn)
+
+        # 箭头和文字点击 -> 展开/收起(事件过滤器, 不干扰刷新按钮)
+        self._click_filter = _RowClickFilter()
+        self._click_filter.clicked.connect(self.clicked.emit)
+        self._arrow.installEventFilter(self._click_filter)
+        self._label.installEventFilter(self._click_filter)
+
+    def set_expanded(self, expanded):
+        self._arrow.setPixmap(_arrow_icon(expanded, theme.TEXT_FAINT).pixmap(12, 12))
+
+    def set_label(self, label, color):
+        self._label.setText(label)
+        self._label.setStyleSheet(
+            f"color: {color}; font-weight: 600; background: transparent; border: none;"
+            f" font-size: {theme.FS_TREE_ROOT}px;")
+
+
 class RightPanel(FloatingWindow):
     """右翼: 全部提供商的模型树。
 
@@ -327,12 +621,13 @@ class RightPanel(FloatingWindow):
     """
 
     refresh_requested = Signal()
+    provider_refresh_requested = Signal(str)   # 单个提供商刷新: 传提供商 name
     copy_requested = Signal(str)
 
     def __init__(self, w, h):
         super().__init__(w, h)
-        self._btn_refresh = ghost_button("探测", "探测全部提供商的可用模型")
-        self._btn_refresh.clicked.connect(self.refresh_requested)
+        self._btn_refresh = _IconButton(_refresh_icon, "探测全部提供商的可用模型",
+                                         clicked=self.refresh_requested.emit)
         self.header("模型", self._btn_refresh)
 
         self._search = search_box("筛选模型…")
@@ -383,23 +678,34 @@ class RightPanel(FloatingWindow):
 
     def _sync_arrow(self, item, open_state):
         if item is not None and item.parent() is None:
-            item.setIcon(0, _arrow_icon(open_state))
+            w = self._tree.itemWidget(item, 0)
+            if isinstance(w, ProviderRootWidget):
+                w.set_expanded(open_state)
 
-    def _make_root(self, label, color, hint=""):
+    def _make_root(self, name, label, color):
+        """创建提供商根节点: 自绘行(箭头+名称+刷新按钮), USER_ROLE 存 name 供筛选。
+
+        返回 (root, widget), 调用方需在 addTopLevelItem 后 setItemWidget。
+        """
         root = QTreeWidgetItem()
-        root.setText(0, label)
-        root.setForeground(0, QColor(color))
-        root.setFont(0, self._font_root)
-        root.setIcon(0, _arrow_icon(False))
-        root.setData(0, USER_ROLE, hint)
-        return root
+        root.setData(0, USER_ROLE, name)
+        root.setSizeHint(0, QSize(0, 28))
+        w = ProviderRootWidget(name, label, color)
+        w.clicked.connect(lambda r=root: self._toggle_root(r))
+        w.refresh_clicked.connect(self.provider_refresh_requested.emit)
+        return root, w
+
+    def _toggle_root(self, item):
+        """点击根节点行: 展开/收起。"""
+        if item is not None and item.parent() is None:
+            item.setExpanded(not item.isExpanded())
 
     def set_results(self, items, stamp=""):
         """items: [(name, model_ids, error_or_None), ...]"""
         self._tree.clear()
         for name, ids, err in items or []:
             if err:
-                root = self._make_root(f"{name} · 探测失败", theme.RED, name)
+                root, w = self._make_root(name, f"{name} · 探测失败", theme.RED)
                 child = QTreeWidgetItem(
                     [_elide(f"原因: {err}", self._text_px, self._tree.font())])
                 child.setForeground(0, QColor(theme.TEXT_DIM))
@@ -408,8 +714,7 @@ class RightPanel(FloatingWindow):
                 root.addChild(child)
             else:
                 models = ids or []
-                root = self._make_root(f"{name} · {len(models)} 个模型",
-                                       theme.TEXT, name)
+                root, w = self._make_root(name, f"{name} · {len(models)} 个模型", theme.TEXT)
                 for mid in models:
                     child = QTreeWidgetItem([_elide(mid, self._text_px, self._tree.font())])
                     child.setForeground(0, QColor(theme.TEXT_DIM))
@@ -418,6 +723,7 @@ class RightPanel(FloatingWindow):
                     child.setData(0, USER_ROLE, f"{name}:{mid}".lower())
                     root.addChild(child)
             self._tree.addTopLevelItem(root)
+            self._tree.setItemWidget(root, 0, w)
             root.setExpanded(False)
         if items:
             self._sync_title()
@@ -453,13 +759,46 @@ class RightPanel(FloatingWindow):
         if item is None:
             return
         if item.parent() is None:
-            # 根节点: 单击展开 / 收起
-            item.setExpanded(not item.isExpanded())
+            # 根节点: 单击展开 / 收起(ProviderRootWidget.clicked 也走此路径)
+            self._toggle_root(item)
             return
         # 模型子行: 单击即复制(复制纯模型名, 供映射弹窗的「模型」栏粘贴)
         full = item.toolTip(0) or item.text(0)
         if full:
             self.copy_requested.emit(full)
+
+    def update_one(self, name, ids, err):
+        """只更新指定提供商的根节点, 保持其他节点和展开状态不变。
+
+        用于单个提供商刷新后局部更新, 避免全量重建导致展开状态丢失。
+        """
+        target = (name or "").strip()
+        for i in range(self._tree.topLevelItemCount()):
+            root = self._tree.topLevelItem(i)
+            if (root.data(0, USER_ROLE) or "").strip() == target:
+                root.takeChildren()
+                w = self._tree.itemWidget(root, 0)
+                if err:
+                    if isinstance(w, ProviderRootWidget):
+                        w.set_label(f"{name} · 探测失败", theme.RED)
+                    child = QTreeWidgetItem(
+                        [_elide(f"原因: {err}", self._text_px, self._tree.font())])
+                    child.setForeground(0, QColor(theme.TEXT_DIM))
+                    child.setToolTip(0, err)
+                    child.setData(0, USER_ROLE, "")
+                    root.addChild(child)
+                else:
+                    models = ids or []
+                    if isinstance(w, ProviderRootWidget):
+                        w.set_label(f"{name} · {len(models)} 个模型", theme.TEXT)
+                    for mid in models:
+                        child = QTreeWidgetItem([_elide(mid, self._text_px, self._tree.font())])
+                        child.setForeground(0, QColor(theme.TEXT_DIM))
+                        child.setToolTip(0, mid)
+                        child.setData(0, USER_ROLE, f"{name}:{mid}".lower())
+                        root.addChild(child)
+                self._sync_title()
+                return
 
     def remove_provider(self, name):
         target = (name or "").strip()
@@ -474,61 +813,54 @@ class RightPanel(FloatingWindow):
 # ---------------------------------------------------------------- 顶中: 代理开关
 
 class TopSwitch(FloatingWindow):
-    """顶部中央胶囊: 映射 | 端口(启停) | 请求计数(点击清零) | 复制。
+    """顶部中央胶囊: 端口(启停+自动复制) | 映射 | 请求计数(点击清零)。
 
-    四段独立点击区:
+    三段独立点击区:
+      - 「端口」: 点击启停本地代理, 同时自动复制代理地址; 数字颜色 灰=停 / 绿=运行
       - 「映射」: 打开自定义映射弹窗
-      - 「端口」: 点击启停本地代理, 数字颜色 灰=停 / 绿=运行
       - 「计数」: 显示本次运行以来的请求次数, 点击清零
-      - 「复制」: 复制 http://127.0.0.1:<port>/v1 进剪贴板
     """
 
     toggle_requested = Signal()
     mapping_requested = Signal()
-    copy_requested = Signal(str)     # 当前端口
+    copy_requested = Signal(str)     # 端口点击时自动复制当前端口
     count_requested = Signal()       # 点击计数按钮 -> 清零
 
     def __init__(self, w, h):
         super().__init__(w, h)
-        inner = QFrame(self.panel)
-        inner.setStyleSheet(
-            f"QFrame {{ background: {theme.BG_CARD}; border: 1px solid {theme.BORDER_STRONG};"
-            f" border-radius: 14px; }}")
-        # 四段均分整条胶囊: 每个按钮 stretch=1, 文字各自水平居中
-        row = _hbox((8, 0, 8, 0), spacing=0, parent=inner)
+        # 三段均分整条胶囊: 水平行内每个按钮 stretch=1, 文字各自水平居中
+        lay = self.body()
+        lay.setContentsMargins(8, 4, 8, 4)
+        lay.setSpacing(0)
+        row = _hbox((0, 0, 0, 0), spacing=0)
+
+        self._port = 10901
+        self._btn_port = ghost_button("10901", "点击启停代理, 同时复制地址")
+        self._btn_port.clicked.connect(self._on_port_clicked)
+        row.addWidget(self._btn_port, 1)
+
+        row.addWidget(self._vsep())
 
         self._btn_map = ghost_button("映射", "打开自定义映射窗口")
         self._btn_map.clicked.connect(self.mapping_requested)
         row.addWidget(self._btn_map, 1)
 
-        row.addWidget(self._vsep(inner))
-
-        self._port = 10901
-        self._btn_port = ghost_button("10901", "点击启动本地转发代理")
-        self._btn_port.clicked.connect(self.toggle_requested)
-        row.addWidget(self._btn_port, 1)
-
-        row.addWidget(self._vsep(inner))
+        row.addWidget(self._vsep())
 
         self._btn_count = ghost_button("0", "本次运行以来的请求次数, 点击清零")
         self._btn_count.clicked.connect(self.count_requested)
         row.addWidget(self._btn_count, 1)
 
-        row.addWidget(self._vsep(inner))
+        lay.addLayout(row)
 
-        self._btn_copy = ghost_button("复制", "复制代理地址到剪贴板")
-        self._btn_copy.clicked.connect(
-            lambda _checked=False, s=self: s.copy_requested.emit(str(s._port)))
-        row.addWidget(self._btn_copy, 1)
-
-        lay = self.body()
-        lay.setContentsMargins(6, 6, 6, 6)
-        lay.setSpacing(0)
-        lay.addWidget(inner)
+    def _on_port_clicked(self):
+        """端口按钮点击: 启停代理 + 自动复制代理地址。"""
+        self.toggle_requested.emit()
+        self.copy_requested.emit(str(self._port))
 
     @staticmethod
-    def _vsep(parent):
-        s = QFrame(parent)
+    def _vsep():
+        s = QFrame()
         s.setFrameShape(QFrame.Shape.VLine)
         s.setFixedSize(1, 16)
         s.setStyleSheet(f"color: {theme.BORDER_STRONG};"
@@ -603,8 +935,9 @@ class ToastRow(QFrame):
         row.addWidget(ts)
         msg = QLabel()
         fm = QFontMetrics(msg.font())
-        # URL 类长文本用 ElideMiddle, 保留开头协议和结尾路径
-        msg.setText(fm.elidedText(text, Qt.TextElideMode.ElideMiddle,
+        # ElideRight: 只截结尾, 保证开头的快捷键/状态等关键信息完整显示
+        # (URL 类长文本虽适合 ElideMiddle, 但点击行可看 tooltip 全文)
+        msg.setText(fm.elidedText(text, Qt.TextElideMode.ElideRight,
                                   max(60, width - 150)))
         msg.setToolTip(text)
         c = theme.TEXT if level in ("info", "req", "sys") else LEVEL_COLORS.get(level, theme.TEXT)
@@ -646,11 +979,14 @@ class LogDock(FloatingWindow):
     """
 
     MAX_ROWS = 200
-    COLLAPSED_H = 52        # 折叠态: 仅标题行的高度
+    COLLAPSED_H = 68        # 折叠态: 标题行(过滤按钮多, 需足够高度)
     _SIZE_MAX = 16777215
 
     def __init__(self, w, h):
         super().__init__(w, h)
+        # 紧凑内边距: 与上胶囊风格统一, 折叠态只留标题行
+        self.body().setContentsMargins(12, 10, 12, 10)
+        self.body().setSpacing(6)
         self._exp_h = int(h)                 # 展开态高度(调用方传入 LOG_H)
         self._expanded = False
         self._expand_anim = None
@@ -664,10 +1000,9 @@ class LogDock(FloatingWindow):
             b.clicked.connect(lambda _checked=False, k=key: self._set_filter(k))
             self._filter_buttons[key] = b
 
-        self._btn_toggle = ghost_button("展开", "展开 / 折叠日志面板")
-        self._btn_toggle.clicked.connect(self._on_toggle)
-        btn = ghost_button("清空", "清空日志")
-        btn.clicked.connect(self.clear)
+        self._btn_toggle = _IconButton(_expand_icon, "展开日志面板",
+                                        clicked=self._on_toggle)
+        btn = _IconButton(_clear_icon, "清空日志", clicked=self.clear)
         self.header("日志",
                     self._filter_buttons["all"],
                     self._filter_buttons["req"],
@@ -686,6 +1021,7 @@ class LogDock(FloatingWindow):
         # 启动即折叠; 动画尚未发生, 直接定位即可
         self.setFixedSize(self.width(), self.COLLAPSED_H)
         self._remask(self.COLLAPSED_H)
+        self._sync_toggle_text()
 
     # ---- 展开 / 折叠 ----
     def is_expanded(self):
@@ -738,12 +1074,13 @@ class LogDock(FloatingWindow):
         self._sync_toggle_text()
 
     def _sync_toggle_text(self):
-        self._btn_toggle.setText("收起" if self._expanded else "展开")
+        # 日志面板从底部向上展开: 折叠时显示向上箭头(向上展开), 展开时显示向下箭头(向下收起)
+        self._btn_toggle.set_icon_fn(_expand_icon if self._expanded else _collapse_icon)
         self._btn_toggle.setToolTip("折叠日志面板" if self._expanded else "展开日志面板")
 
     def _remask(self, h):
         path = QPainterPath()
-        path.addRoundedRect(QRectF(0.5, 0.5, self.width() - 1, h - 1), 10, 10)
+        path.addRoundedRect(QRectF(0.5, 0.5, self.width() - 1, h - 1), 12, 12)
         self.setMask(QRegion(path.toFillPolygon().toPolygon()))
 
     # ---- 内容 ----

@@ -56,6 +56,47 @@ class ModelsCache:
         with self._lock:
             self._items = None
 
+    def probe_one(self, name):
+        """只探测指定提供商, 更新缓存中该提供商的结果, 返回 (name, ids, err)。
+
+        不影响其他提供商的缓存结果和展开状态。
+        """
+        name = (name or "").strip()
+        target = None
+        for p in (self._get_providers() or []):
+            if (p.get("name") or "").strip() == name:
+                target = p
+                break
+        if target is None:
+            return (name, [], f"提供商不存在: {name}")
+        if self._skip and self._skip(target):
+            return (name, [], "该提供商指向代理自身, 跳过探测")
+        try:
+            ids = probe_models(target.get("url") or "",
+                                target.get("key") or "", self._timeout)
+            err = None
+        except Exception as e:  # noqa: BLE001
+            ids = []
+            err = str(e)
+        # 原子更新缓存中该提供商的结果
+        with self._lock:
+            if self._items is None:
+                self._items = [(name, list(ids), err)]
+            else:
+                replaced = False
+                new_items = []
+                for n, old_ids, old_err in self._items:
+                    if (n or "").strip() == name:
+                        new_items.append((name, list(ids), err))
+                        replaced = True
+                    else:
+                        new_items.append((n, old_ids, old_err))
+                if not replaced:
+                    new_items.append((name, list(ids), err))
+                self._items = new_items
+            self._fetched_at = time.monotonic()
+        return (name, list(ids), err)
+
     def peek(self):
         """返回上一次探测结果(不触发探测);从未探测过返回 None。
 

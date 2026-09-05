@@ -310,7 +310,8 @@ def _make_handler(proxy):
         def _log_request(self, method, path, target, status, started):
             secs = time.time() - started
             proxy.inc_request()
-            proxy.log(f"{method} {path} -> {target} [{status}] {secs:.2f}s")
+            # 简化: 去掉上游完整 URL(target), 只保留请求路径+状态+耗时
+            proxy.log(f"{method} {path} [{status}] {secs:.1f}s")
 
     return Handler
 
@@ -366,19 +367,19 @@ class ProxyServer:
     def start(self, port):
         with self._lock:
             if self._server is not None:
-                return False, f"服务已在运行 (端口 {self.port})"
+                return False, f"已在运行: 端口 {self.port}"
             handler = _make_handler(self)
             try:
                 server = ThreadingHTTPServer(("127.0.0.1", port), handler)
             except OSError as e:
-                return False, f"端口 {port} 绑定失败: {e}"
+                return False, f"端口 {port} 绑定失败"
             server.daemon_threads = True
             self._server = server
             self._thread = threading.Thread(target=server.serve_forever, daemon=True)
             self._thread.start()
             self.port = port
             self.reset_count()   # 每次启动清零,只统计本次运行以来的请求
-            return True, f"本地转发已开启: http://127.0.0.1:{port}"
+            return True, f"转发已开启: 端口 {port}"
 
     def stop(self):
         with self._lock:

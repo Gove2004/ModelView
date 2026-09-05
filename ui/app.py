@@ -29,13 +29,14 @@ from .hotkey import GlobalHotkey
 # ---------------------------------------------------------------- 尺寸
 MARGIN = 14
 CAP_W, CAP_H = 300, 40          # 顶中胶囊: 映射 | 端口(启停) | 计数 | 复制
-LOG_W, LOG_H = 560, 160
+LOG_W, LOG_H = 560, 200
 LEFT_W, RIGHT_W = 292, 330
 
 
 class App(QObject):
     sig_log = Signal(str, str)     # level, text —— 线程安全, 自动排队回主线程
     sig_probe = Signal(object)     # [(name, ids, err), ...]
+    sig_probe_one = Signal(object) # (name, ids, err) —— 单个提供商刷新结果
 
     def __init__(self, cfg: Config, animate=True):
         super().__init__()
@@ -80,6 +81,7 @@ class App(QObject):
         self.left.edit_requested.connect(self._open_edit)
         self.left.delete_requested.connect(self._delete_provider)
         self.right.refresh_requested.connect(self._do_probe)
+        self.right.provider_refresh_requested.connect(self._probe_one)
         self.right.copy_requested.connect(self._copy_model)
         self.top.toggle_requested.connect(self._toggle_proxy)
         self.top.mapping_requested.connect(self._open_mapping)
@@ -88,6 +90,7 @@ class App(QObject):
 
         self.sig_log.connect(self.logdock.append)
         self.sig_probe.connect(self._on_probe_done)
+        self.sig_probe_one.connect(self._on_probe_one_done)
         self._proxy = ProxyServer(cfg, self._proxy_log_cb)
 
         # ---- 托盘(左键单击显隐, 右键动态菜单) ----
@@ -108,8 +111,7 @@ class App(QObject):
                                   QSystemTrayIcon.MessageIcon.Information, 2500)
         else:
             code = self._hotkey.error_code
-            self._nlog(f"全局热键注册失败(错误码 {code}, Ctrl+Alt+M 可能被占用), "
-                       f"仅托盘可唤回", "warn")
+            self._nlog(f"热键注册失败(码{code}), 仅托盘可唤回", "warn")
 
         # ---- 启动 ----
         self._refresh_providers()
@@ -122,8 +124,7 @@ class App(QObject):
         if cfg.is_proxy_enabled():
             QTimer.singleShot(300, self._toggle_proxy)   # 恢复上次转发状态
         self._anim_to_targets(show=True)
-        self._nlog("ModelView 已就绪 · Ctrl+Alt+M 显隐面板 · 顶栏: 映射 / "
-                   "端口(点按启停) / 计数(点击清零) / 复制地址", "sys")
+        self._nlog("已就绪 · Ctrl+Alt+M 显隐面板", "sys")
 
     # ------------------------------------------------------------ 日志
     def _proxy_log_cb(self, msg):
@@ -402,10 +403,10 @@ class App(QObject):
             if old is not None:
                 self.right.remove_provider(old.get("name", ""))
             self.cfg.update_provider(self._dlg_edit_pid, name, url, key)
-            self._nlog(f"已更新提供商: {name}", "sys")
+            self._nlog(f"已更新: {name}", "sys")
         else:
             self.cfg.add_provider(name, url, key)
-            self._nlog(f"已新增提供商: {name} ({url or '无 url'})", "sys")
+            self._nlog(f"已新增: {name}", "sys")
         self.cfg.save()
         self._after_provider_change()
         dlg.hide()
@@ -445,7 +446,7 @@ class App(QObject):
         self._proxy.models_cache.invalidate()
         self.right.remove_provider(p.get("name", ""))
         self._refresh_providers()
-        self._nlog(f"已删除提供商: {p.get('name')}", "sys")
+        self._nlog(f"已删除: {p.get('name')}", "sys")
 
     def _copy_model(self, label):
         QApplication.clipboard().setText(label)
@@ -514,18 +515,19 @@ class App(QObject):
         dlg.hide()
         bound = sum(1 for r in rows if r.get("provider") and r.get("model"))
         named = len([r for r in rows if (r.get("alias") or "").strip()])
-        msg = f"已保存 {named} 条映射(其中 {bound} 个已绑定)"
-        if bound < named:
-            self._nlog(msg + f" · {named - bound} 个空位绑定后才能转发", "sys")
+        if named == 0:
+            self._nlog("映射已清空", "sys")
+        elif bound < named:
+            self._nlog(f"映射已保存: {bound}/{named} 已绑定", "sys")
         else:
-            self._nlog(msg, "sys")
+            self._nlog(f"映射已保存: {named} 条", "sys")
 
     # ------------------------------------------------------------ 探测
     def _do_probe(self):
         if self._probing:
             return
         if not self.cfg.get_providers():
-            self._nlog("还没有提供商 — 先在左翼点 \"添加\"", "warn")
+            self._nlog("无提供商, 请先添加", "warn")
             return
         self._probing = True
         self.right.set_probing(True)
@@ -549,9 +551,43 @@ class App(QObject):
         fail = len(items) - ok
         total = sum(len(ids) for _n, ids, _err in items)
         if fail:
-            self._nlog(f"探测完成: {ok} 家成功 / {fail} 家失败, 共 {total} 个模型", "warn")
+            self._nlog(f"探测完成: {ok}成/{fail}败, {total}模型", "warn")
         else:
-            self._nlog(f"探测完成: {ok} 家提供商, 共 {total} 个模型", "ok")
+            self._nlog(f"探测完成: {ok}家, {total}模型", "ok")
+
+    # ------------------------------------------------------------ 单个提供商刷新
+    def _probe_one(self, name):
+        """刷新单个提供商的模型列表, 后台线程探测, 完成后局部更新右栏。"""
+        if self._probing:
+            return
+        name = (name or "").strip()
+        if not name:
+            return
+        self._probing = True
+        self.right.set_probing(True)
+        self._nlog(f"刷新中: {name}", "sys")
+        threading.Thread(target=self._probe_one_worker, args=(name,), daemon=True).start()
+
+    def _probe_one_worker(self, name):
+        try:
+            result = self._proxy.models_cache.probe_one(name)
+        except Exception as e:  # noqa: BLE001
+            result = (name, [], f"探测异常: {e}")
+        self.sig_probe_one.emit(result)
+
+    def _on_probe_one_done(self, result):
+        name, ids, err = result
+        self._probing = False
+        self.right.set_probing(False)
+        self.right.update_one(name, ids, err)
+        if self._mdlg is not None and self._mdlg.isVisible():
+            self._mdlg.refresh_models(self._models_by_provider())
+        if err:
+            # 错误信息可能很长, 截断到 40 字符
+            short_err = (err[:40] + "…") if len(err) > 40 else err
+            self._nlog(f"刷新失败: {name} ({short_err})", "err")
+        else:
+            self._nlog(f"刷新完成: {name}, {len(ids or [])}模型", "sys")
 
     # ------------------------------------------------------------ 代理启停
     def _toggle_proxy(self):
@@ -559,7 +595,7 @@ class App(QObject):
             self._proxy.stop()
             self.cfg.set_proxy_enabled(False)
             self.cfg.save()
-            self._nlog("本地转发已停止", "sys")
+            self._nlog("转发已停止", "sys")
         else:
             ok, msg = self._proxy.start(self.cfg.get_port())
             self._nlog(msg, "sys" if ok else "err")

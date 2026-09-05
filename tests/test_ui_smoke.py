@@ -42,15 +42,15 @@ def main():
     check("左翼位于屏幕左缘 x=0", a.left.pos().x() == 0)
     check("右翼贴右缘", a.right.pos().x() + a.right.width() == a._geo.width())
     check("日志条贴底部", a.logdock.pos().y() + a.logdock.height() >= a._geo.height() - 14)
-    check("顶开关为 映射|端口|计数|复制 四段", not hasattr(a.top, "_label")
-          and a.top._btn_map.text() == "映射" and a.top._btn_copy.text() == "复制"
-          and a.top._btn_port.text() == "10901" and a.top._btn_count.text() == "0")
-    bw = (a.top._btn_map.width(), a.top._btn_port.width(),
-          a.top._btn_count.width(), a.top._btn_copy.width())
-    check("胶囊四段等宽均分", max(bw) - min(bw) <= 1, str(bw))
-    check("计数按钮位于端口与复制之间",
-          a.top._btn_port.pos().x() < a.top._btn_count.pos().x()
-          and a.top._btn_count.pos().x() < a.top._btn_copy.pos().x())
+    check("顶开关为 端口|映射|计数 三段", not hasattr(a.top, "_label")
+          and a.top._btn_port.text() == "10901" and a.top._btn_map.text() == "映射"
+          and a.top._btn_count.text() == "0")
+    bw = (a.top._btn_port.width(), a.top._btn_map.width(), a.top._btn_count.width())
+    check("胶囊三段等宽均分", max(bw) - min(bw) <= 1, str(bw))
+    check("顺序为 端口<映射<计数",
+          a.top._btn_port.pos().x() < a.top._btn_map.pos().x()
+          and a.top._btn_map.pos().x() < a.top._btn_count.pos().x())
+    check("无独立复制按钮(端口点击自动复制)", not hasattr(a.top, "_btn_copy"))
 
     # 日志分级渲染
     for lvl in ("ok", "err", "warn", "req", "info"):
@@ -74,7 +74,7 @@ def main():
           and a.logdock.height() == a.logdock.COLLAPSED_H)
     check("左翼无探测按钮(探测归右翼)", not hasattr(a.left, "_btn_probe"))
     check("右翼有探测按钮(探测入口)", a.right._btn_refresh is not None)
-    check("右翼按钮文案为'探测'(非'刷新')", a.right._btn_refresh.text() == "探测")
+    check("右翼按钮为图标(探测全部)", "探测全部" in a.right._btn_refresh.toolTip())
     check("右翼无状态 pill(标题行干净)", not hasattr(a.right, "_pill"))
 
     # 提供商 CRUD 全流程
@@ -93,15 +93,15 @@ def main():
     check("左翼标题带计数 提供商(1家)",
           a.left._title_lab.text() == "提供商(1家)")
 
-    # 卡片操作按钮点击链路(clicked 携带 checked 参数, 不得顶替 pid)
-    btns = {b.text(): b for b in card.findChildren(QPushButton)}
-    check("卡片行尾按钮为 修改/删除", "修改" in btns and "删除" in btns)
-    btns["修改"].click()
+    # 卡片操作按钮点击链路(图标按钮, 通过 tooltip 识别)
+    btns = {b.toolTip(): b for b in card.findChildren(QPushButton)}
+    check("卡片行尾按钮为 修改/删除", "修改提供商" in btns and "删除提供商(需确认)" in btns)
+    btns["修改提供商"].click()
     app.processEvents()
     check("点[修改]打开弹层且预填", a._dlg is not None
           and a._dlg._name.text() == "ds" and not a._dlg.isHidden())
     a._dlg.hide()
-    check("卡片无[复制URL]按钮", "复制 URL" not in btns)
+    check("卡片无[复制URL]按钮", "复制 URL" not in btns and "复制URL" not in btns)
 
     # 左翼搜索筛选
     a.left._search.setText("ds")
@@ -161,11 +161,14 @@ def main():
     # ---- 顶部「映射」入口 + 映射弹窗 ----
     check("顶部胶囊有映射入口", a.top._btn_map is not None
           and a.top._btn_map.text() == "映射")
-    # 复制地址链路: 点[复制] → 剪贴板
+    # 复制地址链路: 点[端口] → 启停代理 + 自动复制地址
     QApplication.clipboard().setText("")
-    a.top._btn_copy.click()
+    a.top._btn_port.click()
     app.processEvents()
-    check("点[复制]复制代理地址", QApplication.clipboard().text() == "http://127.0.0.1:10901/v1")
+    check("点[端口]自动复制代理地址", QApplication.clipboard().text() == "http://127.0.0.1:10901/v1")
+    # 停止代理, 避免后续重复启动失败
+    if a._proxy.running:
+        a._proxy.stop()
     a._on_dialog_saved("ds", "https://api.deepseek.com/v1", "sk-test")
     app.processEvents()
     a._open_mapping()
@@ -232,7 +235,7 @@ def main():
     # 删除流程(走卡片[删除] → 确认窗 → 确认, 覆盖整条信号链)
     card = list(a.left._cards.values())[0]
     for b in card.findChildren(QPushButton):
-        if b.text() == "删除":
+        if "删除提供商" in b.toolTip():
             b.click()
             break
     app.processEvents()

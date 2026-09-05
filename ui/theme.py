@@ -1,43 +1,44 @@
 # -*- coding: utf-8 -*-
-"""ModelView 深色主题: 颜色常量 + 字号体系(px) + 全局 QSS。
+"""ModelView 深色主题: Windows 11 风格夜晚模式。
 
-设计语言(参考史莱姆悬浮 UI, 简化版):
-  - 实心深色面板(不做半透明), 小圆角, 1px 描边
-  - 层次: 面板 -> 卡片(提亮) -> 槽位(压暗)
-  - 语义色: 绿=运行/成功, 红=错误, 琥珀=警告
-  - 字号全部使用 px, 严禁与 pt 混用(历史教训: 树根曾用 10.5pt 与其它
-    12px 混排导致大小观感不齐)。所有内联样式统一引用下面常量。
+设计语言(参考 Windows 11 Mica / Fluent Design):
+  - 中性灰调(不偏蓝), 实心深色面板, 小圆角, 1px 描边
+  - 层次: 面板(#242424) -> 卡片(#2d2d2d) -> 槽位(#1a1a1a)
+  - 强调色: Windows 蓝 #0078d4(主操作) / 亮蓝 #4cc2ff(焦点/链接)
+  - 语义色: 绿=成功, 红=错误, 黄=警告, 紫=系统事件
+  - 字号全部使用 px, 严禁与 pt 混用。
 """
 
-# ---------- 基础层次 ----------
-BG_PANEL = "#222734"      # 悬浮面板底色
-BG_CARD = "#2b3140"       # 面板内卡片/条目
-BG_CARD_HOVER = "#343b4d"
-BG_SUNKEN = "#1a1e28"     # 列表槽 / 输入框
-BG_HEADER = "#262b38"     # 面板头
+# ---------- 基础层次(Windows 11 中性灰) ----------
+BG_PANEL = "#242424"      # 悬浮面板底色(Mica 深色)
+BG_CARD = "#2d2d2d"       # 面板内卡片/条目
+BG_CARD_HOVER = "#353535"
+BG_SUNKEN = "#1a1a1a"     # 列表槽 / 输入框
+BG_HEADER = "#282828"     # 面板头
 
-BORDER = "#3c4457"
-BORDER_STRONG = "#4a546e"
+BORDER = "#3d3d3d"
+BORDER_STRONG = "#4a4a4a"
 
 # ---------- 文本(三级: 主 / 次 / 弱) ----------
-TEXT = "#e3e8f2"          # 主文本
-TEXT_DIM = "#a8b1c4"      # 次级
-TEXT_FAINT = "#727d93"    # 弱(辅助/时间戳), 已比旧版提亮一档保证可读
+TEXT = "#ffffff"          # 主文本(Windows 11 深色纯白)
+TEXT_DIM = "#b0b0b0"      # 次级
+TEXT_FAINT = "#7a7a7a"    # 弱(辅助/时间戳)
 
 # ---------- 语义色 ----------
-GREEN = "#43d693"         # 运行中 / 成功
-GREEN_DIM = "#2f9669"
-GRAY_DOT = "#5f6875"      # 停用态灰点
-RED = "#f06b68"           # 错误
-RED_DIM = "#b04542"
-AMBER = "#e8bd63"         # 警告
-BLUE = "#74abf8"          # 信息 / 链接 / 焦点
+GREEN = "#4cc28a"         # 运行中 / 成功
+GREEN_DIM = "#107c10"     # 成功暗(按钮背景)
+GRAY_DOT = "#5a5a5a"      # 停用态灰点
+RED = "#ff6b6b"           # 错误
+RED_DIM = "#c42b1c"       # 错误暗(Windows 红)
+AMBER = "#ffc83d"         # 警告
+BLUE = "#4cc2ff"          # 信息 / 链接 / 焦点(Windows 亮蓝)
 PURPLE = "#b8a4e8"        # 系统事件(启动/启停/配置变更)
 
-# ---------- 派生色(hover / 选中 / 强调按钮文字) ----------
-ACCENT_HOVER = "#37a878"  # accent 按钮 hover
-DANGER_HOVER = "#c05552"  # danger 按钮 hover
-SELECTION_BG = "#33507a"  # 列表/下拉选中项背景
+# ---------- 派生色(hover / 选中 / 强调) ----------
+ACCENT = "#0078d4"        # Windows 强调蓝(主操作按钮)
+ACCENT_HOVER = "#106ebe"  # 强调蓝 hover
+DANGER_HOVER = "#a5281c"  # 危险按钮 hover
+SELECTION_BG = "#3e3e42"  # 列表/下拉选中项背景(Windows 11 深色选中)
 TEXT_ON_ACCENT = "#ffffff"  # 强调按钮上的文字色
 
 FONT_FAMILY = "'Segoe UI', 'Microsoft YaHei UI', 'Microsoft YaHei'"
@@ -68,8 +69,8 @@ QWidget {{
 /* 悬浮面板本体 */
 QFrame#panel {{
     background: {BG_PANEL};
-    border: 1px solid {BORDER};
-    border-radius: 10px;
+    border: 1px solid {BORDER_STRONG};
+    border-radius: 12px;
 }}
 QLabel#panelTitle {{
     font-size: {FS_PANEL_TITLE}px;
@@ -97,12 +98,13 @@ QPushButton:disabled {{
     background: {BG_SUNKEN};
 }}
 QPushButton#accent {{
-    background: {GREEN_DIM};
-    border-color: {GREEN_DIM};
+    background: {ACCENT};
+    border-color: {ACCENT};
     color: {TEXT_ON_ACCENT};
 }}
 QPushButton#accent:hover {{
     background: {ACCENT_HOVER};
+    border-color: {ACCENT_HOVER};
 }}
 QPushButton#ghost {{
     background: transparent;
